@@ -117,3 +117,14 @@ def bulk_sync_device_favorites_task(user_id, team_ids, league_ids, fixture_ids):
                         NotificationService.unsubscribe_tokens_from_topic([dev.registration_id], f"fixture_{fid}_{other_lang}")
             except Exception as e:
                 print(f"Failed to subscribe user device {dev.id} to match_{fid}_{lang}: {e}")
+
+
+@shared_task
+def unsubscribe_deactivated_device_task(device_id):
+    try:
+        from .models import UserDevice
+        from .services import unsubscribe_deactivated_device
+        device = UserDevice.objects.get(id=device_id)
+        unsubscribe_deactivated_device(device)
+    except Exception as e:
+        print(f"Error in unsubscribe_deactivated_device_task: {e}")

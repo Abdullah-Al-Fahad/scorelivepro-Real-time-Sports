@@ -59,6 +59,11 @@ urlpatterns = [
     path('profile/favorites/teams/', ManageFavoriteTeamsView.as_view(), name='manage-fav-teams'),
     path('profile/favorites/leagues/', ManageFavoriteLeaguesView.as_view(), name='manage-fav-leagues'),
     path('profile/favorites/matches/', ManageFavoriteMatchesView.as_view(), name='manage-fav-matches'),
+    path('profile/favorites/fixtures/', ManageFavoriteMatchesView.as_view(), name='manage-fav-fixtures-alias'),
+    path('profile/favorites/sync-guest/', BulkSyncFavoritesView.as_view(), name='favorites-bulk-sync-guest-alias'),
+    path('favorites/fixtures/', ManageFavoriteMatchesView.as_view(), name='fav-fixtures-alias'),
+    path('favorites/sync-guest/', BulkSyncFavoritesView.as_view(), name='fav-sync-guest-alias'),
+
     path('profile/favorites/sync/', BulkSyncFavoritesView.as_view(), name='favorites-bulk-sync'),
 
     # Email Verification

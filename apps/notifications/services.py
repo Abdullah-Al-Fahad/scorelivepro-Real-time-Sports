@@ -1852,3 +1852,45 @@ class NotificationService:
                 print(f"Unsubscribed {len(batch)} tokens from {topic}")
             except Exception as e:
                 print(f"Error unsubscribing from {topic}: {e}")
+
+def unsubscribe_deactivated_device(device):
+    """
+    Unsubscribes a deactivated device (active=False) from all FCM topics.
+    """
+    if not device or not device.registration_id:
+        return
+    languages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'tr']
+    all_topics = ['global'] + [f'global_{l}' for l in languages]
+    
+    team_ids, league_ids, fixture_ids = [], [], []
+    if device.user and hasattr(device.user, 'fan_profile'):
+        profile = device.user.fan_profile
+        team_ids = list(profile.favorite_teams.values_list('id', flat=True))
+        league_ids = list(profile.favorite_leagues.values_list('id', flat=True))
+        fixture_ids = list(profile.favorite_fixtures.values_list('id', flat=True))
+    elif device.guest_id:
+        from users.models import GuestFavorite
+        fav = GuestFavorite.objects.filter(device_id=device.guest_id).first()
+        if fav:
+            team_ids = list(fav.favorite_teams.values_list('id', flat=True))
+            league_ids = list(fav.favorite_leagues.values_list('id', flat=True))
+            fixture_ids = list(fav.favorite_fixtures.values_list('id', flat=True))
+            
+    for tid in team_ids:
+        all_topics.append(f'team_{tid}')
+        for l in languages:
+            all_topics.append(f'team_{tid}_{l}')
+    for lid in league_ids:
+        all_topics.append(f'league_{lid}')
+        for l in languages:
+            all_topics.append(f'league_{lid}_{l}')
+    for fid in fixture_ids:
+        all_topics.extend([f'match_{fid}', f'fixture_{fid}'])
+        for l in languages:
+            all_topics.extend([f'match_{fid}_{l}', f'fixture_{fid}_{l}'])
+            
+    for topic in all_topics:
+        try:
+            NotificationService.unsubscribe_tokens_from_topic([device.registration_id], topic)
+        except Exception:
+            pass

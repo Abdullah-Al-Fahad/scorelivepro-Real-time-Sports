@@ -283,7 +283,7 @@ class HideNotificationView(views.APIView):
 
 
 @extend_schema(tags=['Notifications'])
-class FCMDeviceView(generics.CreateAPIView):
+class FCMDeviceView(views.APIView):
     """
     Register or update a device FCM token.
     """
@@ -322,6 +322,12 @@ class FCMDeviceView(generics.CreateAPIView):
         existing_device = UserDevice.objects.filter(registration_id=registration_id).first()
         old_lang = existing_device.language if existing_device else None
 
+        active_val = request.data.get('active', True)
+        if isinstance(active_val, str):
+            active_val = active_val.lower() not in ('false', '0')
+        elif not isinstance(active_val, bool):
+            active_val = bool(active_val)
+
         device, created = UserDevice.objects.update_or_create(
             registration_id=registration_id,
             defaults={
@@ -329,9 +335,17 @@ class FCMDeviceView(generics.CreateAPIView):
                 'guest_id': guest_id,
                 'type': device_type,
                 'language': language,
-                'active': True
+                'active': active_val
             }
         )
+        
+        if not active_val:
+            try:
+                from .tasks import unsubscribe_deactivated_device_task
+                unsubscribe_deactivated_device_task.delay(device.id)
+            except Exception as e:
+                print(f"Failed to queue topic unsubscribe: {e}")
+            return Response({'status': 'Device deactivated and unsubscribed', 'device_id': device.id}, status=status.HTTP_200_OK)
         
         # Sync user profile language if logged in and profile language was empty
         if user and hasattr(user, 'fan_profile'):
@@ -355,6 +369,21 @@ class FCMDeviceView(generics.CreateAPIView):
                 print(f"Failed to queue topic subscriptions sync: {e}")
         
         return Response({'status': 'Device registered', 'device_id': device.id}, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, *args, **kwargs):
+        registration_id = request.data.get('registration_id') or request.query_params.get('registration_id')
+        if not registration_id:
+            return Response({"error": "registration_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        device = UserDevice.objects.filter(registration_id=registration_id).first()
+        if device:
+            device.active = False
+            device.save(update_fields=['active'])
+            try:
+                from .tasks import unsubscribe_deactivated_device_task
+                unsubscribe_deactivated_device_task.delay(device.id)
+            except Exception as e:
+                print(f"Failed to queue topic unsubscribe: {e}")
+        return Response({"status": "Device deactivated and unsubscribed"}, status=status.HTTP_200_OK)
 
 class TestPushNotificationView(views.APIView):
     """
