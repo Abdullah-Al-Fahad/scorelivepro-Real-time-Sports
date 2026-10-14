@@ -476,4 +476,12 @@ class AdminUserManagementSerializer(serializers.ModelSerializer):
     
 
 class BulkSyncRequestSerializer(serializers.Serializer):
-    guest_id = serializers.CharField(required=True)
+    guest_id = serializers.CharField(required=False)
+    device_id = serializers.CharField(required=False)
+
+    def validate(self, attrs):
+        if not attrs.get('guest_id') and not attrs.get('device_id'):
+            raise serializers.ValidationError("Either 'guest_id' or 'device_id' is required.")
+        if not attrs.get('guest_id'):
+            attrs['guest_id'] = attrs['device_id']
+        return attrs

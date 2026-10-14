@@ -776,6 +776,7 @@ class NotificationService:
         # Ensure deep-link route is always present
         if data and "match_id" in data and "route" not in data:
             data["route"] = f"/match/{data['match_id']}"
+            data["deep_link"] = f"/match-detail?id={data['match_id']}"
         elif data and "league_id" in data and "route" not in data:
             data["route"] = f"/league/{data['league_id']}"
         elif data and "team_id" in data and "route" not in data and data.get("type") == "team":
@@ -1057,6 +1058,7 @@ class NotificationService:
         # Ensure deep-link route is always present
         if data and "match_id" in data and "route" not in data:
             data["route"] = f"/match/{data['match_id']}"
+            data["deep_link"] = f"/match-detail?id={data['match_id']}"
         elif data and "league_id" in data and "route" not in data:
             data["route"] = f"/league/{data['league_id']}"
         elif data and "team_id" in data and "route" not in data and data.get("type") == "team":

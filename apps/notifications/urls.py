@@ -7,6 +7,9 @@ from .views import (
 
 urlpatterns = [
     # Mobile App User Endpoints
+    path('devices/', FCMDeviceView.as_view(), name='register-device-alias'),
+    path('inbox/unread-count/', UnreadCountView.as_view(), name='notification-unread-count-alias'),
+    path('inbox/read-all/', MarkAllReadView.as_view(), name='notification-mark-read-alias'),
     path('inbox/', NotificationInboxView.as_view(), name='notification-inbox'),
     path('unread-count/', UnreadCountView.as_view(), name='notification-unread-count'),
     path('mark-read/', MarkAllReadView.as_view(), name='notification-mark-read'),

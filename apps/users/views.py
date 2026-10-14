@@ -471,6 +471,31 @@ def _sync_device_topic(devices, prefix, item_id, is_subscribe=True):
 #                  3. FAVORITES (LIST / ADD / REMOVE)
 # =========================================================
 
+
+def _extract_guest_id(request):
+    """
+    Extracts guest/device identifier from headers, query params, or body.
+    Supports X-Guest-ID, X-Device-ID, X-DeviceId, guest_id, device_id.
+    """
+    if not request:
+        return None
+    header_val = (
+        request.headers.get('X-Guest-ID')
+        or request.headers.get('X-Device-ID')
+        or request.headers.get('X-DeviceId')
+        or request.headers.get('X-Device-Id')
+    )
+    if header_val:
+        return str(header_val).strip()
+    query_val = request.query_params.get('guest_id') or request.query_params.get('device_id')
+    if query_val:
+        return str(query_val).strip()
+    if hasattr(request, 'data') and isinstance(request.data, dict):
+        body_val = request.data.get('guest_id') or request.data.get('device_id')
+        if body_val:
+            return str(body_val).strip()
+    return None
+
 class ManageFavoriteTeamsView(views.APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -486,9 +511,9 @@ class ManageFavoriteTeamsView(views.APIView):
             return Response([], status=status.HTTP_200_OK)
         
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
         
         guest_fav, _ = GuestFavorite.objects.get_or_create(device_id=guest_id)
         teams = guest_fav.favorite_teams.all()
@@ -515,9 +540,9 @@ class ManageFavoriteTeamsView(views.APIView):
             return Response({"error": "Not a fan"}, status=400)
         
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
             
         guest_fav, _ = GuestFavorite.objects.get_or_create(device_id=guest_id)
         guest_fav.favorite_teams.add(team)
@@ -547,9 +572,9 @@ class ManageFavoriteTeamsView(views.APIView):
             return Response({"message": f"Removed {team.name}."}, status=200)
             
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
             
         try:
             guest_fav = GuestFavorite.objects.get(device_id=guest_id)
@@ -579,9 +604,9 @@ class ManageFavoriteLeaguesView(views.APIView):
             return Response([], status=status.HTTP_200_OK)
             
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
             
         guest_fav, _ = GuestFavorite.objects.get_or_create(device_id=guest_id)
         leagues = guest_fav.favorite_leagues.all()
@@ -607,9 +632,9 @@ class ManageFavoriteLeaguesView(views.APIView):
             return Response({"message": f"Added {league.name}."}, status=200)
             
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
             
         guest_fav, _ = GuestFavorite.objects.get_or_create(device_id=guest_id)
         guest_fav.favorite_leagues.add(league)
@@ -639,9 +664,9 @@ class ManageFavoriteLeaguesView(views.APIView):
             return Response({"message": f"Removed {league.name}."}, status=200)
             
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
             
         try:
             guest_fav = GuestFavorite.objects.get(device_id=guest_id)
@@ -671,9 +696,9 @@ class ManageFavoriteMatchesView(views.APIView):
             return Response([], status=status.HTTP_200_OK)
 
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
 
         guest_fav, _ = GuestFavorite.objects.get_or_create(device_id=guest_id)
         fixtures = guest_fav.favorite_fixtures.all()
@@ -701,9 +726,9 @@ class ManageFavoriteMatchesView(views.APIView):
             return Response({"error": "Not a fan"}, status=400)
 
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
 
         guest_fav, _ = GuestFavorite.objects.get_or_create(device_id=guest_id)
         guest_fav.favorite_fixtures.add(fixture)
@@ -735,9 +760,9 @@ class ManageFavoriteMatchesView(views.APIView):
             return Response({"message": f"Removed match {fixture.id}."}, status=200)
 
         # Guest User
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
         if not guest_id:
-            return Response({"error": "guest_id or X-Guest-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "guest_id, X-Guest-ID, or X-Device-ID header is required for anonymous requests"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             guest_fav = GuestFavorite.objects.get(device_id=guest_id)

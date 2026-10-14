@@ -49,6 +49,13 @@ urlpatterns = [
     path('profile/settings/', UpdateSettingsView.as_view(), name='profile-settings'),
     
     # 3. Favorites (POST / DELETE)
+    path('favorites/teams/', ManageFavoriteTeamsView.as_view(), name='fav-teams-alias'),
+    path('favorites/leagues/', ManageFavoriteLeaguesView.as_view(), name='fav-leagues-alias'),
+    path('favorites/matches/', ManageFavoriteMatchesView.as_view(), name='fav-matches-alias'),
+    path('favorites/sync/', BulkSyncFavoritesView.as_view(), name='fav-sync-alias'),
+    path('guest/favorites/teams/', ManageFavoriteTeamsView.as_view(), name='guest-fav-teams-alias'),
+    path('guest/favorites/leagues/', ManageFavoriteLeaguesView.as_view(), name='guest-fav-leagues-alias'),
+    path('guest/favorites/matches/', ManageFavoriteMatchesView.as_view(), name='guest-fav-matches-alias'),
     path('profile/favorites/teams/', ManageFavoriteTeamsView.as_view(), name='manage-fav-teams'),
     path('profile/favorites/leagues/', ManageFavoriteLeaguesView.as_view(), name='manage-fav-leagues'),
     path('profile/favorites/matches/', ManageFavoriteMatchesView.as_view(), name='manage-fav-matches'),

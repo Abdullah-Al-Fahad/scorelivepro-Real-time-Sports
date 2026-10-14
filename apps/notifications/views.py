@@ -24,6 +24,31 @@ class StandardPagination(PageNumberPagination):
 #                  MOBILE USER VIEWS
 # =========================================================
 
+
+def _extract_guest_id(request):
+    """
+    Extracts guest/device identifier from headers, query params, or body.
+    Supports X-Guest-ID, X-Device-ID, X-DeviceId, guest_id, device_id.
+    """
+    if not request:
+        return None
+    header_val = (
+        request.headers.get('X-Guest-ID')
+        or request.headers.get('X-Device-ID')
+        or request.headers.get('X-DeviceId')
+        or request.headers.get('X-Device-Id')
+    )
+    if header_val:
+        return str(header_val).strip()
+    query_val = request.query_params.get('guest_id') or request.query_params.get('device_id')
+    if query_val:
+        return str(query_val).strip()
+    if hasattr(request, 'data') and isinstance(request.data, dict):
+        body_val = request.data.get('guest_id') or request.data.get('device_id')
+        if body_val:
+            return str(body_val).strip()
+    return None
+
 class NotificationInboxView(generics.ListAPIView):
     """
     Returns a personalized feed of notifications based on the user's
@@ -35,7 +60,7 @@ class NotificationInboxView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        guest_id = self.request.headers.get('X-Guest-ID') or self.request.query_params.get('guest_id') or self.request.data.get('guest_id')
+        guest_id = _extract_guest_id(self.request)
 
         fav_team_ids = []
         fav_league_ids = []
@@ -117,7 +142,7 @@ class NotificationInboxView(generics.ListAPIView):
 
         # 4. Device Language by Guest ID or User Devices
         if not lang and self.request:
-            guest_id = self.request.headers.get('X-Guest-ID') or self.request.query_params.get('guest_id')
+            guest_id = _extract_guest_id(self.request)
             if guest_id:
                 device = UserDevice.objects.filter(guest_id=guest_id, active=True).first()
                 if device and device.language:
@@ -145,7 +170,7 @@ class UnreadCountView(views.APIView):
     @extend_schema(responses={200: {"unread_count": 5}})
     def get(self, request):
         user = request.user
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
 
         fav_team_ids = []
         fav_league_ids = []
@@ -217,7 +242,7 @@ class MarkAllReadView(views.APIView):
 
     def post(self, request):
         user = request.user
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
 
         if user and user.is_authenticated:
             if hasattr(user, 'fan_profile'):
@@ -245,7 +270,7 @@ class HideNotificationView(views.APIView):
     def delete(self, request, pk):
         notification = get_object_or_404(NotificationLog, pk=pk)
         user = request.user
-        guest_id = request.headers.get('X-Guest-ID') or request.query_params.get('guest_id') or request.data.get('guest_id')
+        guest_id = _extract_guest_id(request)
 
         if user and user.is_authenticated:
             UserHiddenNotification.objects.get_or_create(user=user, notification=notification)
@@ -277,9 +302,10 @@ class FCMDeviceView(generics.CreateAPIView):
             guest_id = None
         else:
             user = None
-            guest_id = request.data.get('guest_id') or request.headers.get('X-Guest-ID') or request.query_params.get('guest_id')
+            guest_id = _extract_guest_id(request)
             if not guest_id:
-                return Response({"error": "guest_id is required for anonymous devices"}, status=status.HTTP_400_BAD_REQUEST)
+                import uuid
+                guest_id = str(uuid.uuid5(uuid.NAMESPACE_OID, registration_id))
 
         # Get language and validate
         language = request.data.get('language') or request.query_params.get('language')
