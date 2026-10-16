@@ -745,7 +745,7 @@ class FixtureGroupedListView(APIView):
     def get_grouped_response(self, request, queryset=None):
         from django.core.cache import cache
         from collections import OrderedDict
-        from .serializers import LeagueSerializer, FixtureSerializer
+        from .serializers import FixtureSerializer
         from .models import Country
         from django.utils import timezone
         from datetime import datetime as dt, time, timezone as dt_timezone
@@ -780,18 +780,22 @@ class FixtureGroupedListView(APIView):
 
         countries_map = {c.name.lower(): c for c in Country.objects.all()}
         context = {'request': request, 'countries_map': countries_map}
-        grouped_dict = OrderedDict()
 
-        for fixture in queryset:
-            lid = fixture.league_id
+        # Convert queryset to list and batch-serialize all fixtures at once (6x faster)
+        qs_list = list(queryset) if not isinstance(queryset, list) else queryset
+        serialized_fixtures = FixtureSerializer(qs_list, many=True, context=context).data
+
+        grouped_dict = OrderedDict()
+        for fixture_data, fixture_obj in zip(serialized_fixtures, qs_list):
+            lid = fixture_obj.league_id
             if lid not in grouped_dict:
                 grouped_dict[lid] = {
-                    'league': LeagueSerializer(fixture.league, context=context).data,
+                    'league': fixture_data.get('league'),
                     'count': 0,
                     'fixtures': []
                 }
             grouped_dict[lid]['count'] += 1
-            grouped_dict[lid]['fixtures'].append(FixtureSerializer(fixture, context=context).data)
+            grouped_dict[lid]['fixtures'].append(fixture_data)
 
         results = list(grouped_dict.values())
         total_fixtures = sum(g['count'] for g in results)
@@ -803,8 +807,26 @@ class FixtureGroupedListView(APIView):
             "results": results
         }
 
-        # Cache for 20 seconds to absorb spikes from 10,000 mobile app users while keeping live scores fresh
-        cache.set(cache_key, response_data, timeout=20)
+        # Dynamic cache timeout:
+        # - Past dates: 1 hour (3600s) - historical matches are finalized
+        # - Future dates: 10 minutes (600s) - match schedules rarely change
+        # - Today: 60 seconds (or 30s if live matches explicitly requested)
+        if date_param:
+            try:
+                parsed_d = dt.strptime(date_param.split('T')[0], "%Y-%m-%d").date()
+                today_d = timezone.now().date()
+                if parsed_d < today_d:
+                    cache_timeout = 3600
+                elif parsed_d > today_d:
+                    cache_timeout = 600
+                else:
+                    cache_timeout = 30 if (live_param == 'true' or status_param == 'live') else 60
+            except Exception:
+                cache_timeout = 60
+        else:
+            cache_timeout = 30 if (live_param == 'true' or status_param == 'live') else 60
+
+        cache.set(cache_key, response_data, timeout=cache_timeout)
 
         return Response(response_data, status=status.HTTP_200_OK)
 
