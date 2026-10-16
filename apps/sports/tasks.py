@@ -225,17 +225,19 @@ def save_fixture_from_api(item):
 
         season_obj, _ = Season.objects.get_or_create(year=l['season'])
 
-        league_obj, _ = League.objects.update_or_create(
-            id=l['id'],
-            defaults={
-                'name': l.get('name', 'Unknown'),
-                'country': country_obj,
-                'logo': l.get('logo'),
-                'season_year': l['season'],
-                'type': l.get('type', 'League'),
-                'region': resolve_league_region(l['id'], l.get('name'), l.get('country'))
-            }
-        )
+        league_obj = League.objects.filter(id=l['id']).first()
+        if not league_obj:
+            league_obj, _ = League.objects.get_or_create(
+                id=l['id'],
+                defaults={
+                    'name': l.get('name', 'Unknown'),
+                    'country': country_obj,
+                    'logo': l.get('logo'),
+                    'season_year': l['season'],
+                    'type': l.get('type', 'League'),
+                    'region': resolve_league_region(l['id'], l.get('name'), l.get('country'))
+                }
+            )
 
         venue_obj = None
         if f.get('venue'):
@@ -251,19 +253,25 @@ def save_fixture_from_api(item):
                 
             if v_id:
                 venue_name = v_name or f"Venue {abs(v_id)}"
-                venue_obj, _ = Venue.objects.update_or_create(
-                    id=v_id,
-                    defaults={'name': venue_name, 'city': v_data.get('city')}
-                )
+                venue_obj = Venue.objects.filter(id=v_id).first()
+                if not venue_obj:
+                    venue_obj, _ = Venue.objects.get_or_create(
+                        id=v_id,
+                        defaults={'name': venue_name, 'city': v_data.get('city')}
+                    )
 
-        home_team, _ = Team.objects.update_or_create(
-            id=t['home']['id'],
-            defaults={'name': t['home'].get('name', ''), 'logo': t['home'].get('logo'), 'venue': venue_obj}
-        )
-        away_team, _ = Team.objects.update_or_create(
-            id=t['away']['id'],
-            defaults={'name': t['away'].get('name', ''), 'logo': t['away'].get('logo')}
-        )
+        home_team = Team.objects.filter(id=t['home']['id']).first()
+        if not home_team:
+            home_team, _ = Team.objects.get_or_create(
+                id=t['home']['id'],
+                defaults={'name': t['home'].get('name', ''), 'logo': t['home'].get('logo'), 'venue': venue_obj}
+            )
+        away_team = Team.objects.filter(id=t['away']['id']).first()
+        if not away_team:
+            away_team, _ = Team.objects.get_or_create(
+                id=t['away']['id'],
+                defaults={'name': t['away'].get('name', ''), 'logo': t['away'].get('logo')}
+            )
 
         # --- SAVE FIXTURE TO DB ---
         status_data = f.get('status', {})

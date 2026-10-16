@@ -737,6 +737,14 @@ class FixtureGroupedListView(APIView):
 
     def get_grouped_response(self, request, queryset=None):
         if queryset is None:
+            # If no date, live, or status filter is provided, default to today's date
+            # to prevent serializing the entire multi-year database in memory
+            if not request.query_params.get('date') and not request.query_params.get('live') and not request.query_params.get('status'):
+                from django.utils import timezone
+                mutable_get = request.GET.copy()
+                mutable_get['date'] = timezone.now().date().strftime("%Y-%m-%d")
+                request.GET = mutable_get
+
             view = FixtureListView()
             view.request = request
             view.format_kwarg = None

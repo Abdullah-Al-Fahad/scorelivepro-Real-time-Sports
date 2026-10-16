@@ -17,6 +17,13 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
+# --- DATABASE RESILIENCE & DEADLOCK PREVENTION ---
+# lock_timeout=10000ms: Abort transactions waiting on locks > 10s to prevent server freezes
+# statement_timeout=30000ms: Guard against runaway unindexed queries
+if 'default' in DATABASES:
+    DATABASES['default'].setdefault('OPTIONS', {})
+    DATABASES['default']['OPTIONS']['options'] = '-c lock_timeout=10000 -c statement_timeout=30000'
+
 # Explicitly use the Redis broker for Channels
 CELERY_BROKER_URL = env('CELERY_BROKER_URL')
 CHANNEL_LAYERS = {
