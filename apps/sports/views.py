@@ -536,9 +536,10 @@ class FixtureListView(generics.ListAPIView):
  
     def get_queryset(self):
         from django.db.models import Case, When, Value, IntegerField, Q
+        from django.core.cache import cache
         
         queryset = Fixture.objects.select_related(
-            'league', 'league__country', 'season', 'home_team', 'away_team', 'venue'
+            'league', 'league__country', 'season', 'home_team', 'away_team', 'venue', 'lineup', 'statistic'
         ).all()
 
         team_param = self.request.query_params.get('team')
@@ -551,11 +552,14 @@ class FixtureListView(generics.ListAPIView):
                 season_id=target_year
             ).exists()
             if not local_exists:
-                from .tasks import fetch_and_update_team_fixtures
-                try:
-                    fetch_and_update_team_fixtures.delay(team_param, target_year)
-                except Exception:
-                    pass
+                sync_team_key = f"sync_team_fixtures:{team_param}:{target_year}"
+                if not cache.get(sync_team_key):
+                    cache.set(sync_team_key, True, timeout=120)
+                    from .tasks import fetch_and_update_team_fixtures
+                    try:
+                        fetch_and_update_team_fixtures.delay(team_param, target_year)
+                    except Exception:
+                        pass
 
             queryset = queryset.filter(Q(home_team_id=team_param) | Q(away_team_id=team_param))
 
@@ -599,11 +603,14 @@ class FixtureListView(generics.ListAPIView):
                         need_sync = True
 
                 if need_sync:
-                    from .tasks import fetch_fixtures_for_date
-                    try:
-                        fetch_fixtures_for_date.delay(date_str)
-                    except Exception:
-                        pass
+                    sync_date_key = f"sync_fixtures_date:{date_str}"
+                    if not cache.get(sync_date_key):
+                        cache.set(sync_date_key, True, timeout=120)
+                        from .tasks import fetch_fixtures_for_date
+                        try:
+                            fetch_fixtures_for_date.delay(date_str)
+                        except Exception:
+                            pass
 
                 queryset = queryset.filter(date__gte=start_dt, date__lte=end_dt)
             except (ValueError, TypeError):
@@ -736,24 +743,43 @@ class FixtureGroupedListView(APIView):
     permission_classes = [AllowAny]
 
     def get_grouped_response(self, request, queryset=None):
+        from django.core.cache import cache
+        from collections import OrderedDict
+        from .serializers import LeagueSerializer, FixtureSerializer
+        from .models import Country
+        from django.utils import timezone
+        from datetime import datetime as dt, time, timezone as dt_timezone
+
+        # Build a distinct cache key based on query parameters
+        date_param = str(request.query_params.get('date', '')).strip()
+        status_param = str(request.query_params.get('status', '')).strip()
+        live_param = str(request.query_params.get('live', '')).strip()
+        team_param = str(request.query_params.get('team', '')).strip()
+        league_param = str(request.query_params.get('league', '')).strip()
+        user_country = str(request.query_params.get('user_country', '')).strip()
+        tz_param = str(request.query_params.get('tz') or request.query_params.get('timezone_offset') or '').strip()
+
+        cache_key = f"grouped_fixtures:{date_param}:{status_param}:{live_param}:{team_param}:{league_param}:{user_country}:{tz_param}"
+
         if queryset is None:
-            # If no date, live, or status filter is provided, default to today's date
-            # to prevent serializing the entire multi-year database in memory
-            if not request.query_params.get('date') and not request.query_params.get('live') and not request.query_params.get('status'):
-                from django.utils import timezone
-                mutable_get = request.GET.copy()
-                mutable_get['date'] = timezone.now().date().strftime("%Y-%m-%d")
-                request.GET = mutable_get
+            cached_data = cache.get(cache_key)
+            if cached_data is not None:
+                return Response(cached_data, status=status.HTTP_200_OK)
 
             view = FixtureListView()
             view.request = request
             view.format_kwarg = None
             queryset = view.get_queryset()
 
-        from collections import OrderedDict
-        from .serializers import LeagueSerializer, FixtureSerializer
+            # Prevent unbounded multi-year table scan if no date or specific filter was provided
+            if not date_param and not status_param and live_param != 'true' and not team_param and not league_param:
+                today = timezone.now().date()
+                start_dt = dt.combine(today, time.min).replace(tzinfo=dt_timezone.utc)
+                end_dt = dt.combine(today, time.max).replace(tzinfo=dt_timezone.utc)
+                queryset = queryset.filter(date__gte=start_dt, date__lte=end_dt)
 
-        context = {'request': request}
+        countries_map = {c.name.lower(): c for c in Country.objects.all()}
+        context = {'request': request, 'countries_map': countries_map}
         grouped_dict = OrderedDict()
 
         for fixture in queryset:
@@ -770,12 +796,17 @@ class FixtureGroupedListView(APIView):
         results = list(grouped_dict.values())
         total_fixtures = sum(g['count'] for g in results)
 
-        return Response({
+        response_data = {
             "success": True,
             "count": len(results),
             "total_fixtures": total_fixtures,
             "results": results
-        }, status=status.HTTP_200_OK)
+        }
+
+        # Cache for 20 seconds to absorb spikes from 10,000 mobile app users while keeping live scores fresh
+        cache.set(cache_key, response_data, timeout=20)
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
     def get(self, request, *args, **kwargs):
         return self.get_grouped_response(request)
