@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   web:
     build: .
@@ -22,6 +28,7 @@ services:
       - static_volume:/app/staticfiles
       - media_volume:/app/mediafiles
       - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    logging: *default-logging
 
   asgi:
     build: .
@@ -45,6 +52,7 @@ services:
       - static_volume:/app/staticfiles
       - media_volume:/app/mediafiles
       - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    logging: *default-logging
 
   nginx:
     image: nginx:1.25-alpine
@@ -58,6 +66,7 @@ services:
     depends_on:
       - web
       - asgi
+    logging: *default-logging
       
   db:
     image: postgres:15-alpine
@@ -66,16 +75,18 @@ services:
       - postgres_data:/var/lib/postgresql/data
     env_file:
       - .env
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
 
   celery:
     build: .
     image: itzwasik/scorelivepro-web:latest
     restart: unless-stopped
-    command: celery -A config worker -l info -Q high_priority,celery -c 4
+    command: celery -A config worker -l info -Q high_priority,celery -c 4 --max-tasks-per-child=1000
     env_file:
       - .env
     environment:
@@ -89,6 +100,7 @@ services:
     volumes:
       - .:/app
       - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    logging: *default-logging
 
   celery-beat:
     build: .
@@ -108,6 +120,7 @@ services:
     volumes:
       - .:/app
       - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    logging: *default-logging
 
 volumes:
   postgres_data:

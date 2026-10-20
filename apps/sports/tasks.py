@@ -332,6 +332,7 @@ def save_fixture_from_api(item):
 
         alert_eligible_statuses = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'INT', 'LIVE']
         finished_statuses = ['FT', 'AET', 'PEN']
+        event_lookback = timezone.now() - timedelta(hours=4)
 
         # 1. Goal Alerts
         if has_followers and fixture_exists and (new_status in alert_eligible_statuses or new_status in finished_statuses):
@@ -346,7 +347,8 @@ def save_fixture_from_api(item):
                     data__match_id=str(fixture.id),
                     data__team_id=str(fixture.home_team.id),
                     data__score=f"{new_goals_home} - {new_goals_away}",
-                    event_type='GOAL'
+                    event_type='GOAL',
+                    created_at__gte=event_lookback
                 ).exists()
 
                 if not already_sent:
@@ -369,7 +371,8 @@ def save_fixture_from_api(item):
                     data__match_id=str(fixture.id),
                     data__team_id=str(fixture.away_team.id),
                     data__score=f"{new_goals_home} - {new_goals_away}",
-                    event_type='GOAL'
+                    event_type='GOAL',
+                    created_at__gte=event_lookback
                 ).exists()
 
                 if not already_sent:
@@ -393,7 +396,8 @@ def save_fixture_from_api(item):
                 already_sent_disallowed = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
                     data__score=new_score_str,
-                    event_type='DISALLOWED_GOAL'
+                    event_type='DISALLOWED_GOAL',
+                    created_at__gte=event_lookback
                 ).exists()
                 if not already_sent_disallowed:
                     _dispatch_alert(
@@ -442,7 +446,8 @@ def save_fixture_from_api(item):
                             data__match_id=str(fixture.id),
                             data__player_name=player_name,
                             data__card_type=detail,
-                            event_type='CARD'
+                            event_type='CARD',
+                            created_at__gte=event_lookback
                         ).exists()
                         if not already_sent:
                             _dispatch_alert(
@@ -461,7 +466,8 @@ def save_fixture_from_api(item):
                             data__match_id=str(fixture.id),
                             data__player_in=player_name,
                             data__player_out=assist_name,
-                            event_type='SUBSTITUTION'
+                            event_type='SUBSTITUTION',
+                            created_at__gte=event_lookback
                         ).exists()
                         if not already_sent:
                             _dispatch_alert(
@@ -480,7 +486,8 @@ def save_fixture_from_api(item):
                             data__match_id=str(fixture.id),
                             data__detail=detail,
                             data__elapsed=str(elapsed),
-                            event_type='VAR'
+                            event_type='VAR',
+                            created_at__gte=event_lookback
                         ).exists()
                         if not already_sent:
                             _dispatch_alert(
@@ -498,7 +505,8 @@ def save_fixture_from_api(item):
                             data__match_id=str(fixture.id),
                             data__player_name=player_name,
                             data__elapsed=str(elapsed),
-                            event_type='MISSED_PENALTY'
+                            event_type='MISSED_PENALTY',
+                            created_at__gte=event_lookback
                         ).exists()
                         if not already_sent:
                             _dispatch_alert(
@@ -516,7 +524,8 @@ def save_fixture_from_api(item):
                             data__match_id=str(fixture.id),
                             data__player_name=player_name,
                             data__elapsed=str(elapsed),
-                            event_type='OWN_GOAL'
+                            event_type='OWN_GOAL',
+                            created_at__gte=event_lookback
                         ).exists()
                         if not already_sent:
                             og_score = f"{new_goals_home if new_goals_home is not None else 0} - {new_goals_away if new_goals_away is not None else 0}"
@@ -543,7 +552,8 @@ def save_fixture_from_api(item):
             if has_followers:
                 already_sent_ko = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
-                    event_type='KICKOFF'
+                    event_type='KICKOFF',
+                    created_at__gte=event_lookback
                 ).exists()
                 if not already_sent_ko:
                     _dispatch_alert(
@@ -559,7 +569,8 @@ def save_fixture_from_api(item):
             if has_followers:
                 already_sent_2h = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
-                    event_type='SECOND_HALF'
+                    event_type='SECOND_HALF',
+                    created_at__gte=event_lookback
                 ).exists()
                 if not already_sent_2h:
                     cur_score = f"{new_goals_home if new_goals_home is not None else 0} - {new_goals_away if new_goals_away is not None else 0}"
@@ -577,7 +588,8 @@ def save_fixture_from_api(item):
             if has_followers:
                 already_sent_ht = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
-                    event_type='HALF_TIME'
+                    event_type='HALF_TIME',
+                    created_at__gte=event_lookback
                 ).exists()
                 if not already_sent_ht:
                     ht_score = f"{new_goals_home if new_goals_home is not None else 0} - {new_goals_away if new_goals_away is not None else 0}"
@@ -595,7 +607,8 @@ def save_fixture_from_api(item):
             if has_followers:
                 already_sent_et = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
-                    event_type='EXTRA_TIME'
+                    event_type='EXTRA_TIME',
+                    created_at__gte=event_lookback
                 ).exists()
                 if not already_sent_et:
                     cur_score = f"{new_goals_home if new_goals_home is not None else 0} - {new_goals_away if new_goals_away is not None else 0}"
@@ -613,7 +626,8 @@ def save_fixture_from_api(item):
             if has_followers:
                 already_sent_pen = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
-                    event_type='PENALTY_SHOOTOUT'
+                    event_type='PENALTY_SHOOTOUT',
+                    created_at__gte=event_lookback
                 ).exists()
                 if not already_sent_pen:
                     _dispatch_alert(
@@ -640,7 +654,8 @@ def save_fixture_from_api(item):
                 ev_code = disruption_code_map.get(new_status, 'POSTPONED')
                 already_sent_disrupt = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
-                    event_type=ev_code
+                    event_type=ev_code,
+                    created_at__gte=event_lookback
                 ).exists()
                 if not already_sent_disrupt:
                     _dispatch_alert(
@@ -659,7 +674,8 @@ def save_fixture_from_api(item):
                 # [IDEMPOTENCY CHECK] Ensure we haven't already sent FT for this match
                 already_sent_ft = NotificationLog.objects.filter(
                     data__match_id=str(fixture.id),
-                    event_type='FULL_TIME'
+                    event_type='FULL_TIME',
+                    created_at__gte=event_lookback
                 ).exists()
                 
                 if not already_sent_ft:
@@ -1053,6 +1069,7 @@ def update_fixture_details(fixture_id, type='lineups'):
                     return f"{time_elapsed}_{time_extra}_{team_id}_{ev_type}_{player_id}_{detail}"
                 
                 old_event_keys = {_make_event_key(ev) for ev in (old_events or [])}
+                evt_lookback = timezone.now() - timedelta(hours=4)
                 
                 for ev in new_events:
                     ev_key = _make_event_key(ev)
@@ -1070,7 +1087,8 @@ def update_fixture_details(fixture_id, type='lineups'):
                                 data__match_id=str(fixture.id),
                                 data__player_name=player_name,
                                 data__card_type=detail,
-                                event_type='CARD'
+                                event_type='CARD',
+                                created_at__gte=evt_lookback
                             ).exists()
                             if not already_sent:
                                 _dispatch_evt(
@@ -1089,7 +1107,8 @@ def update_fixture_details(fixture_id, type='lineups'):
                                 data__match_id=str(fixture.id),
                                 data__player_in=player_name,
                                 data__player_out=assist_name,
-                                event_type='SUBSTITUTION'
+                                event_type='SUBSTITUTION',
+                                created_at__gte=evt_lookback
                             ).exists()
                             if not already_sent:
                                 _dispatch_evt(
@@ -1108,7 +1127,8 @@ def update_fixture_details(fixture_id, type='lineups'):
                                 data__match_id=str(fixture.id),
                                 data__detail=detail,
                                 data__elapsed=str(elapsed),
-                                event_type='VAR'
+                                event_type='VAR',
+                                created_at__gte=evt_lookback
                             ).exists()
                             if not already_sent:
                                 _dispatch_evt(
@@ -1598,7 +1618,8 @@ def check_upcoming_matches_and_notify():
         # DUPLICATE CHECK: Use match_id in JSON data to ensure we don't spam
         already_notified = NotificationLog.objects.filter(
             data__match_id=str(match.id),
-            event_type='MATCH_START'
+            event_type='MATCH_START',
+            created_at__gte=now - timedelta(hours=4)
         ).exists()
         
         if already_notified:
