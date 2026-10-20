@@ -784,9 +784,13 @@ class NotificationService:
         elif data and "player_id" in data and "route" not in data and data.get("type") == "player":
             data["route"] = f"/player/{data['player_id']}"
                 
-        # Ensure event_type is in data for the mobile app
+        # Ensure event_type, title, and body are in data for the mobile app
         if "event_type" not in data:
             data["event_type"] = event_type
+        if "title" not in data and title:
+            data["title"] = str(title)
+        if "body" not in data and body:
+            data["body"] = str(body)
 
         # Redis atomic deduplication guard for live sports events (Prevents worker concurrency races)
         import sys
@@ -831,8 +835,11 @@ class NotificationService:
 
             def _send_lang(lang):
                 t_title, t_body = translate_notification(title, body, event_type, lang)
+                lang_data = data.copy()
+                lang_data["title"] = str(t_title)
+                lang_data["body"] = str(t_body)
                 return NotificationService.send_push_to_topic(
-                    f"{topic}_{lang}", t_title, t_body, data, event_type, is_internal=True
+                    f"{topic}_{lang}", t_title, t_body, lang_data, event_type, is_internal=True
                 )
 
             langs = ['en', 'es', 'fr', 'de', 'it', 'pt', 'tr']
