@@ -430,12 +430,13 @@ class TestPushNotificationView(views.APIView):
             if 'event_type' not in data_payload:
                 data_payload['event_type'] = event_type
 
+            target_lang = request.data.get('language') or request.query_params.get('language')
             device = UserDevice.objects.filter(registration_id=token, active=True).first()
             if device:
                 devices = UserDevice.objects.filter(id=device.id)
             else:
                 # Fallback to direct token send if device record is not in database
-                t_title, t_body = translate_notification(title, body, event_type, 'en')
+                t_title, t_body = translate_notification(title, body, event_type, target_lang or 'en')
                 result = NotificationService.send_push_to_token(token, t_title, t_body, data=data_payload)
                 if result.get("success"):
                     return Response(result, status=status.HTTP_200_OK)
@@ -451,9 +452,11 @@ class TestPushNotificationView(views.APIView):
         if 'event_type' not in data_payload:
             data_payload['event_type'] = event_type
 
+        target_lang = request.data.get('language') or request.query_params.get('language')
         results = []
         for device in devices:
-            t_title, t_body = translate_notification(title, body, event_type, device.language)
+            device_target_lang = target_lang or device.language or 'en'
+            t_title, t_body = translate_notification(title, body, event_type, device_target_lang)
             res = NotificationService.send_push_to_token(
                 device.registration_id,
                 t_title,
@@ -464,7 +467,7 @@ class TestPushNotificationView(views.APIView):
                 "device_id": device.id,
                 "guest_id": device.guest_id,
                 "user": device.user.email if device.user else None,
-                "language": device.language,
+                "language": device_target_lang,
                 "success": res.get("success"),
                 "message_id": res.get("message_id"),
                 "error": res.get("error")
