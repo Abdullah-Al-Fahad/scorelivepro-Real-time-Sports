@@ -152,6 +152,21 @@ def resolve_league_region(league_id, league_name, country_name):
 
     return 'World'
 
+def check_match_has_followers(home_team, away_team, league_obj, fixture):
+    """
+    Ultra-fast indexed follower check using direct M2M reverse relationships.
+    Avoids multi-table LEFT OUTER JOINs that cause slow queries and database lock timeouts.
+    """
+    if home_team and (home_team.favorited_by_fans.exists() or home_team.guest_favorites.exists()):
+        return True
+    if away_team and (away_team.favorited_by_fans.exists() or away_team.guest_favorites.exists()):
+        return True
+    if league_obj and (league_obj.favorited_by_fans.exists() or league_obj.guest_favorites.exists()):
+        return True
+    if fixture and (fixture.favorited_by_fans.exists() or fixture.guest_favorites.exists()):
+        return True
+    return False
+
 def save_fixture_from_api(item):
     """
     Parses a single fixture object from the API response.
@@ -317,18 +332,7 @@ def save_fixture_from_api(item):
         #  NOTIFICATIONS & TRIGGERS (UPDATED)
         # =========================================================
         
-        from users.models import FanProfile, GuestFavorite
-        has_followers = FanProfile.objects.filter(
-            Q(favorite_teams=home_team) | 
-            Q(favorite_teams=away_team) | 
-            Q(favorite_leagues=league_obj) |
-            Q(favorite_fixtures=fixture)
-        ).exists() or GuestFavorite.objects.filter(
-            Q(favorite_teams=home_team) | 
-            Q(favorite_teams=away_team) | 
-            Q(favorite_leagues=league_obj) |
-            Q(favorite_fixtures=fixture)
-        ).exists()
+        has_followers = check_match_has_followers(home_team, away_team, league_obj, fixture)
 
         alert_eligible_statuses = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'INT', 'LIVE']
         finished_statuses = ['FT', 'AET', 'PEN']
@@ -744,12 +748,14 @@ def update_live_fixtures():
 
         if api_data:
             print("💾 Saving Live Matches...")
-            with transaction.atomic():
-                for item in api_data:
+            for item in api_data:
+                try:
                     fixture, alerts = save_fixture_from_api(item)
                     if fixture:
                         api_live_ids.add(fixture.id)
                         all_pending_alerts.extend(alerts)
+                except Exception as e:
+                    print(f"Error saving live match {item.get('fixture', {}).get('id')}: {e}")
         
         # ZOMBIE CLEANUP: matches stuck as LIVE in DB but not in API response
         zombie_ids = list(db_live_ids - api_live_ids)
@@ -764,11 +770,13 @@ def update_live_fixtures():
                 try:
                     z_response = requests.get(url, headers=get_headers(), params={'ids': ids_str}, timeout=10)
                     z_data = z_response.json().get('response', [])
-                    with transaction.atomic():
-                        for item in z_data:
+                    for item in z_data:
+                        try:
                             fixture, alerts = save_fixture_from_api(item)
                             if fixture:
                                 all_pending_alerts.extend(alerts)
+                        except Exception as e:
+                            print(f"Error saving finished match: {e}")
                 except Exception as e:
                     print(f"❌ Error updating finished matches {chunk}: {e}")
 
@@ -793,11 +801,13 @@ def update_live_fixtures():
                 try:
                     ns_response = requests.get(url, headers=get_headers(), params={'ids': ids_str}, timeout=10)
                     ns_data = ns_response.json().get('response', [])
-                    with transaction.atomic():
-                        for item in ns_data:
+                    for item in ns_data:
+                        try:
                             fixture, alerts = save_fixture_from_api(item)
                             if fixture:
                                 all_pending_alerts.extend(alerts)
+                        except Exception as e:
+                            print(f"Error saving stuck NS match: {e}")
                     print(f"  ✅ Re-synced {len(ns_data)} stuck-NS fixtures from API.")
                 except Exception as e:
                     print(f"❌ Error re-syncing stuck NS chunk {chunk}: {e}")
@@ -999,19 +1009,7 @@ def update_fixture_details(fixture_id, type='lineups'):
                 fixture=fixture, defaults={'home': data[0] if len(data) > 0 else {}, 'away': data[1] if len(data) > 1 else {}}
             )
             if not already_had_lineups:
-                from users.models import FanProfile, GuestFavorite
-                has_followers = FanProfile.objects.filter(
-                    Q(favorite_teams=fixture.home_team) | 
-                    Q(favorite_teams=fixture.away_team) | 
-                    Q(favorite_leagues=fixture.league) |
-                    Q(favorite_fixtures=fixture)
-                ).exists() or GuestFavorite.objects.filter(
-                    Q(favorite_teams=fixture.home_team) | 
-                    Q(favorite_teams=fixture.away_team) | 
-                    Q(favorite_leagues=fixture.league) |
-                    Q(favorite_fixtures=fixture)
-                ).exists()
-
+                has_followers = check_match_has_followers(fixture.home_team, fixture.away_team, fixture.league, fixture)
                 if has_followers:
                     NotificationService.send_lineup_alert(fixture.home_team, fixture.away_team, fixture.id, fixture.league_id)
         elif type == 'statistics':
@@ -1028,18 +1026,7 @@ def update_fixture_details(fixture_id, type='lineups'):
             fixture.save(update_fields=['events'])
             
             # Check if this match has followers before doing expensive notification work
-            from users.models import FanProfile, GuestFavorite
-            has_followers = FanProfile.objects.filter(
-                Q(favorite_teams=fixture.home_team) | 
-                Q(favorite_teams=fixture.away_team) | 
-                Q(favorite_leagues=fixture.league) |
-                Q(favorite_fixtures=fixture)
-            ).exists() or GuestFavorite.objects.filter(
-                Q(favorite_teams=fixture.home_team) | 
-                Q(favorite_teams=fixture.away_team) | 
-                Q(favorite_leagues=fixture.league) |
-                Q(favorite_fixtures=fixture)
-            ).exists()
+            has_followers = check_match_has_followers(fixture.home_team, fixture.away_team, fixture.league, fixture)
 
             def _dispatch_evt(func, *args, **kwargs):
                 import sys
