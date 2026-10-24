@@ -21,6 +21,8 @@ class NotificationLog(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['topic', 'created_at']),
+            models.Index(fields=['status', 'topic', 'created_at'], name='notif_stat_topic_created_idx'),
+            models.Index(fields=['event_type', 'created_at'], name='notif_event_created_idx'),
         ]
 
     def __str__(self):

@@ -119,6 +119,29 @@ class NotificationInboxView(generics.ListAPIView):
 
         return qs.order_by('-created_at')
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # Deduplicate semantic events across multiple topic rows (e.g. team_42 and league_39 for same goal)
+        seen_events = set()
+        deduped_objects = []
+        for notif in queryset[:200]:
+            match_id = notif.data.get('match_id') if isinstance(notif.data, dict) else None
+            elapsed = notif.data.get('elapsed') if isinstance(notif.data, dict) else None
+            event_key = f"{notif.event_type}:{match_id}:{elapsed}" if match_id else f"raw:{notif.id}"
+
+            if event_key not in seen_events:
+                seen_events.add(event_key)
+                deduped_objects.append(notif)
+
+        page = self.paginate_queryset(deduped_objects)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(deduped_objects, many=True)
+        return Response(serializer.data)
+
     def get_serializer_context(self):
         context = super().get_serializer_context()
         lang = None
@@ -229,7 +252,17 @@ class UnreadCountView(views.APIView):
         elif created_since:
             qs = qs.filter(created_at__gte=created_since - timedelta(minutes=5))
         
-        count = qs.count()
+        # Deduplicate semantic events so unread count matches deduplicated inbox
+        seen_events = set()
+        count = 0
+        for notif in qs[:100]:
+            match_id = notif.data.get('match_id') if isinstance(notif.data, dict) else None
+            elapsed = notif.data.get('elapsed') if isinstance(notif.data, dict) else None
+            event_key = f"{notif.event_type}:{match_id}:{elapsed}" if match_id else f"raw:{notif.id}"
+            if event_key not in seen_events:
+                seen_events.add(event_key)
+                count += 1
+
         return Response({"unread_count": count})
 
 

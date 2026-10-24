@@ -18,6 +18,7 @@ app.conf.task_routes = {
     'sports.tasks.fetch_lineups_near_kickoff': {'queue': 'high_priority'},
     'sports.tasks.check_upcoming_matches_and_notify': {'queue': 'high_priority'},
     'sports.tasks.process_scheduled_notifications': {'queue': 'high_priority'},
+    'notifications.tasks.prune_old_notification_logs': {'queue': 'celery'},
     'notifications.tasks.*': {'queue': 'high_priority'},
     # Low-Priority / Maintenance Sync Tasks
     'sports.tasks.fetch_upcoming_fixtures': {'queue': 'celery'},
@@ -67,6 +68,13 @@ app.conf.beat_schedule = {
     'daily-maintenance-seq': {
         'task': 'sports.tasks.daily_maintenance_workflow',
         'schedule': crontab(hour=3, minute=0),
+    },
+
+    # 4b. PRUNE OLD NOTIFICATION LOGS - 03:30 AM
+    'prune-old-notification-logs': {
+        'task': 'notifications.tasks.prune_old_notification_logs',
+        'schedule': crontab(hour=3, minute=30),
+        'kwargs': {'days': 30},
     },
 
     # 5. H2H WARMUP - 04:30 AM

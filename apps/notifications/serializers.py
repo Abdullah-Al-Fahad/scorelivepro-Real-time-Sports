@@ -23,12 +23,36 @@ class NotificationLogSerializer(serializers.ModelSerializer):
 
     def get_is_read(self, obj):
         request = self.context.get('request')
-        if not request or not request.user or request.user.is_anonymous:
+        if not request:
             return False
-        user = request.user
-        if not hasattr(user, 'fan_profile') or not user.fan_profile.last_inbox_check:
+
+        # 1. Authenticated User Check
+        if request.user and request.user.is_authenticated:
+            user = request.user
+            if hasattr(user, 'fan_profile') and user.fan_profile.last_inbox_check:
+                return obj.created_at <= user.fan_profile.last_inbox_check
             return False
-        return obj.created_at <= user.fan_profile.last_inbox_check
+
+        # 2. Guest User Check (via GuestFavorite.last_inbox_check)
+        if '_guest_last_inbox_check' in self.context:
+            last_inbox_check = self.context['_guest_last_inbox_check']
+            return bool(last_inbox_check and obj.created_at <= last_inbox_check)
+
+        try:
+            from .views import _extract_guest_id
+            guest_id = _extract_guest_id(request)
+            if guest_id:
+                from users.models import GuestFavorite
+                guest_fav = GuestFavorite.objects.filter(device_id=guest_id).first()
+                last_inbox_check = guest_fav.last_inbox_check if guest_fav else None
+                self.context['_guest_last_inbox_check'] = last_inbox_check
+                return bool(last_inbox_check and obj.created_at <= last_inbox_check)
+            else:
+                self.context['_guest_last_inbox_check'] = None
+        except Exception:
+            pass
+
+        return False
 
     def get_time_ago(self, obj):
         return timesince(obj.created_at)

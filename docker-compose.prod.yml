@@ -106,7 +106,7 @@ services:
     build: .
     image: itzwasik/scorelivepro-web:latest
     restart: unless-stopped
-    command: celery -A config beat -l info -s /tmp/celerybeat-schedule
+    command: sh -c "rm -f /tmp/celerybeat.pid /tmp/celerybeat-schedule* && celery -A config beat -l info -s /tmp/celerybeat-schedule"
     env_file:
       - .env
     environment:

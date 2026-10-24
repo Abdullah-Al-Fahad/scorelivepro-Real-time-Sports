@@ -128,3 +128,18 @@ def unsubscribe_deactivated_device_task(device_id):
         unsubscribe_deactivated_device(device)
     except Exception as e:
         print(f"Error in unsubscribe_deactivated_device_task: {e}")
+
+
+@shared_task(name='notifications.tasks.prune_old_notification_logs')
+def prune_old_notification_logs(days=30):
+    """
+    Deletes NotificationLog records older than `days` to maintain database speed.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from .models import NotificationLog
+
+    cutoff = timezone.now() - timedelta(days=days)
+    deleted_count, _ = NotificationLog.objects.filter(created_at__lt=cutoff).delete()
+    print(f"🧹 [PRUNING] Deleted {deleted_count} stale notification logs older than {days} days.")
+    return deleted_count

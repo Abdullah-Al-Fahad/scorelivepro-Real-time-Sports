@@ -813,7 +813,11 @@ def update_live_fixtures():
                     print(f"❌ Error re-syncing stuck NS chunk {chunk}: {e}")
 
         # Broadcast Logic
-        fixtures_queryset = Fixture.objects.filter(status_short__in=live_statuses).select_related(
+        recent_cutoff = timezone.now() - timedelta(minutes=3)
+        fixtures_queryset = Fixture.objects.filter(
+            Q(status_short__in=live_statuses) |
+            Q(status_short__in=['FT', 'AET', 'PEN'], updated_at__gte=recent_cutoff)
+        ).select_related(
             'league', 'league__country', 'season', 'home_team', 'away_team', 'venue'
         ).order_by('date')
         

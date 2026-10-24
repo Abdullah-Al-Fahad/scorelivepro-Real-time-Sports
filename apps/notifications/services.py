@@ -1076,6 +1076,10 @@ class NotificationService:
         # Ensure event_type is present in data
         if "event_type" not in data:
             data["event_type"] = evt_type
+        if "title" not in data:
+            data["title"] = str(title)
+        if "body" not in data:
+            data["body"] = str(body)
         
         use_simulator = not getattr(settings, 'FIREBASE_CONFIGURED', False)
         
