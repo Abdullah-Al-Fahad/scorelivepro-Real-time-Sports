@@ -301,12 +301,12 @@ def translate_notification(title, body, event_type, lang):
     if event_type == 'GOAL':
         m_title = re.search(r"(?:Goal by|Gol di|But de|Tor für)\s+(.+?)(?:\!|$)", title, re.IGNORECASE)
         team = m_title.group(1).strip() if m_title else ""
-        m_body = re.search(r"(?:Score|Result|Risultato|Spielstand|Marcador).*?:\s*(.+?)\s+(\d+[\s-]*\d+)\s+(.+)", body, re.IGNORECASE)
+        m_body = re.search(r"(?:Score|Result|Risultato|Spielstand|Marcador).*?:\s*(.+?)\s+(\d+\s*-\s*\d+)\s+(.+)", body, re.IGNORECASE)
         if m_body:
             home, score, away = m_body.group(1).strip(), m_body.group(2).strip(), m_body.group(3).strip()
         else:
             clean_body = re.sub(r"^.*?:", "", body).strip()
-            score_match = re.search(r"(\d+[\s-]*\d+)", clean_body)
+            score_match = re.search(r"(\d+\s*-\s*\d+)", clean_body)
             if score_match:
                 score = score_match.group(1).strip()
                 parts = clean_body.split(score)
@@ -319,12 +319,12 @@ def translate_notification(title, body, event_type, lang):
         return new_title, new_body
 
     elif event_type == 'FULL_TIME':
-        m_body = re.search(r"(?:Result|Risultato|Spielstand|Marcador).*?:\s*(.+?)\s+(\d+[\s-]*\d+)\s+(.+)", body, re.IGNORECASE)
+        m_body = re.search(r"(?:Result|Risultato|Spielstand|Marcador).*?:\s*(.+?)\s+(\d+\s*-\s*\d+)\s+(.+)", body, re.IGNORECASE)
         if m_body:
             home, score, away = m_body.group(1).strip(), m_body.group(2).strip(), m_body.group(3).strip()
         else:
             clean_body = re.sub(r"^.*?:", "", body).strip()
-            score_match = re.search(r"(\d+[\s-]*\d+)", clean_body)
+            score_match = re.search(r"(\d+\s*-\s*\d+)", clean_body)
             if score_match:
                 score = score_match.group(1).strip()
                 parts = clean_body.split(score)
@@ -426,12 +426,12 @@ def translate_notification(title, body, event_type, lang):
         return new_title, new_body
 
     elif event_type == 'HALF_TIME':
-        m_body = re.search(r"(?:Score|Result|Risultato|Spielstand|Marcador|Skoru|intervallo).*?:\s*(.+?)\s+(\d+[\s-]*\d+)\s+(.+)", body, re.IGNORECASE)
+        m_body = re.search(r"(?:Score|Result|Risultato|Spielstand|Marcador|Skoru|intervallo).*?:\s*(.+?)\s+(\d+\s*-\s*\d+)\s+(.+)", body, re.IGNORECASE)
         if m_body:
             home, score, away = m_body.group(1).strip(), m_body.group(2).strip(), m_body.group(3).strip()
         else:
             clean_body = re.sub(r"^.*?:", "", body).strip()
-            score_match = re.search(r"(\d+[\s-]*\d+)", clean_body)
+            score_match = re.search(r"(\d+\s*-\s*\d+)", clean_body)
             if score_match:
                 score = score_match.group(1).strip()
                 parts = clean_body.split(score)
@@ -446,12 +446,12 @@ def translate_notification(title, body, event_type, lang):
     elif event_type == 'DISALLOWED_GOAL':
         m_title = re.search(r"(?:Disallowed|anulado|refusé|aberkannt|annullato|İptal Edildi):\s*(.+?)(?:\!|$)", title, re.IGNORECASE)
         team = m_title.group(1).strip() if m_title else ""
-        m_body = re.search(r"(?:Score|Result|Risultato|Spielstand|Marcador|Skor).*?:\s*(.+?)\s+(\d+[\s-]*\d+)\s+(.+)", body, re.IGNORECASE)
+        m_body = re.search(r"(?:Score|Result|Risultato|Spielstand|Marcador|Skor).*?:\s*(.+?)\s+(\d+\s*-\s*\d+)\s+(.+)", body, re.IGNORECASE)
         if m_body:
             home, score, away = m_body.group(1).strip(), m_body.group(2).strip(), m_body.group(3).strip()
         else:
             clean_body = re.sub(r"^.*?:", "", body).strip()
-            score_match = re.search(r"(\d+[\s-]*\d+)", clean_body)
+            score_match = re.search(r"(\d+\s*-\s*\d+)", clean_body)
             if score_match:
                 score = score_match.group(1).strip()
                 parts = clean_body.split(score)
@@ -472,7 +472,7 @@ def translate_notification(title, body, event_type, lang):
         return new_title, new_body
 
     elif event_type == 'SECOND_HALF':
-        m_body = re.search(r"(?:begun|commence|hat begonnen|iniziato|Começou|başladı):\s*(.+?)\s+(\d+[\s-]*\d+)\s+(.+)", body, re.IGNORECASE)
+        m_body = re.search(r"(?:begun|commence|hat begonnen|iniziato|Começou|başladı):\s*(.+?)\s+(\d+\s*-\s*\d+)\s+(.+)", body, re.IGNORECASE)
         if m_body:
             home, score, away = m_body.group(1).strip(), m_body.group(2).strip(), m_body.group(3).strip()
         else:
@@ -482,7 +482,7 @@ def translate_notification(title, body, event_type, lang):
         return new_title, new_body
 
     elif event_type == 'EXTRA_TIME':
-        m_body = re.search(r"(?:begun|commencé|läuft|iniziati|Começou|başladı):\s*(.+?)\s+(\d+[\s-]*\d+)\s+(.+)", body, re.IGNORECASE)
+        m_body = re.search(r"(?:begun|commencé|läuft|iniziati|Começou|başladı):\s*(.+?)\s+(\d+\s*-\s*\d+)\s+(.+)", body, re.IGNORECASE)
         if m_body:
             home, score, away = m_body.group(1).strip(), m_body.group(2).strip(), m_body.group(3).strip()
         else:
@@ -513,7 +513,7 @@ def translate_notification(title, body, event_type, lang):
         m_title = re.search(r"by\s+(.+?)\s+\((.+?)\)", title, re.IGNORECASE)
         player = m_title.group(1).strip() if m_title else ""
         team = m_title.group(2).strip() if m_title else ""
-        m_body = re.search(r":\s*(.+?)\s+(\d+[\s-]*\d+)\s+(.+?)\s*(?:\((\d+)'\)|$)", body, re.IGNORECASE)
+        m_body = re.search(r":\s*(.+?)\s+(\d+\s*-\s*\d+)\s+(.+?)\s*(?:\((\d+)'\)|$)", body, re.IGNORECASE)
         if m_body:
             home, score, away = m_body.group(1).strip(), m_body.group(2).strip(), m_body.group(3).strip()
             time = m_body.group(4).strip() if m_body.group(4) else ""
@@ -543,7 +543,16 @@ def translate_notification(title, body, event_type, lang):
     return title, body
 
 def update_device_topic_subscriptions(device, old_lang, new_lang):
-    if not device.registration_id or old_lang == new_lang:
+    if not device or not device.registration_id or not old_lang or not new_lang or old_lang == new_lang:
+        return
+
+    user = device.user
+    notifications_enabled = bool(device.active)
+    if user and hasattr(user, 'fan_profile') and not user.fan_profile.receive_live_notifications:
+        notifications_enabled = False
+
+    if not notifications_enabled:
+        unsubscribe_deactivated_device(device)
         return
     
     NotificationService.ensure_firebase_initialized()
@@ -625,16 +634,21 @@ def sync_device_subscriptions(device):
     Subscribes a device registration token to all fanned-out topics of its owner's favorites.
     Called when a device token is registered or updated.
     """
-    NotificationService.ensure_firebase_initialized()
+    if not device or not device.registration_id:
+        return
+
     user = device.user
+    if not device.active or (user and hasattr(user, 'fan_profile') and not user.fan_profile.receive_live_notifications):
+        unsubscribe_deactivated_device(device)
+        return
+
+    NotificationService.ensure_firebase_initialized()
     guest_id = device.guest_id
     
-    # Priority: user profile language -> device language -> default 'en'
-    lang = None
-    if user and hasattr(user, 'fan_profile') and user.fan_profile.language:
+    # Priority: device language if set -> user profile language if non-English -> default 'en'
+    lang = device.language
+    if (not lang or lang == 'en') and user and hasattr(user, 'fan_profile') and user.fan_profile.language:
         lang = user.fan_profile.language
-    if not lang and device.language:
-        lang = device.language
     if not lang:
         lang = 'en'
 
@@ -851,15 +865,25 @@ class NotificationService:
         if not is_internal and topic.startswith("user_"):
             lang = 'en'
             try:
-                user_id = topic.split('_')[1]
+                user_id = int(topic.split('_')[1])
                 from django.contrib.auth import get_user_model
                 User = get_user_model()
-                user = User.objects.get(id=user_id)
-                if hasattr(user, 'fan_profile'):
-                    lang = user.fan_profile.language
-            except Exception:
-                pass
-            title, body = translate_notification(title, body, event_type, lang)
+                user = User.objects.filter(id=user_id).first()
+                if user:
+                    if hasattr(user, 'fan_profile') and user.fan_profile.language:
+                        lang = user.fan_profile.language
+                    if not lang or lang == 'en':
+                        from .models import UserDevice
+                        dev = UserDevice.objects.filter(user=user, active=True).exclude(language__isnull=True).exclude(language='').first()
+                        if dev and dev.language:
+                            lang = dev.language
+            except Exception as e:
+                print(f"Error fetching language for user topic {topic}: {e}")
+
+            if lang and lang != 'en':
+                title, body = translate_notification(title, body, event_type, lang)
+                data["title"] = str(title)
+                data["body"] = str(body)
 
         # Check if we should use Simulated Dev Mode
         use_simulator = not getattr(settings, 'FIREBASE_CONFIGURED', False)

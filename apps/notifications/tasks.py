@@ -32,11 +32,9 @@ def sync_device_topic_async_task(device_ids, prefix, item_id, is_subscribe=True)
     for dev in devices:
         if not dev.registration_id:
             continue
-        lang = None
-        if dev.user and hasattr(dev.user, 'fan_profile') and dev.user.fan_profile.language:
+        lang = dev.language
+        if (not lang or lang == 'en') and dev.user and hasattr(dev.user, 'fan_profile') and dev.user.fan_profile.language:
             lang = dev.user.fan_profile.language
-        if not lang and dev.language:
-            lang = dev.language
         if not lang:
             lang = 'en'
 
@@ -83,9 +81,11 @@ def bulk_sync_device_favorites_task(user_id, team_ids, league_ids, fixture_ids):
     for dev in devices:
         if not dev.registration_id:
             continue
-        lang = dev.language or 'en'
-        if dev.user and hasattr(dev.user, 'fan_profile') and dev.user.fan_profile.language:
+        lang = dev.language
+        if (not lang or lang == 'en') and dev.user and hasattr(dev.user, 'fan_profile') and dev.user.fan_profile.language:
             lang = dev.user.fan_profile.language
+        if not lang:
+            lang = 'en'
 
         for tid in team_ids:
             try:

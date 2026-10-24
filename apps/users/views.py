@@ -830,6 +830,11 @@ class BulkSyncFavoritesView(views.APIView):
             device.user = request.user
             device.guest_id = None
             device.save()
+            if device.language and hasattr(request.user, 'fan_profile'):
+                profile = request.user.fan_profile
+                if not profile.language or profile.language == 'en':
+                    profile.language = device.language
+                    profile.save(update_fields=['language'])
             
         # 3. For any team/league/fixture favorites added, dispatch background sync for device topic subscriptions
         team_ids = [t.id for t in teams]
