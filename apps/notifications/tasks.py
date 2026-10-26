@@ -131,15 +131,36 @@ def unsubscribe_deactivated_device_task(device_id):
 
 
 @shared_task(name='notifications.tasks.prune_old_notification_logs')
-def prune_old_notification_logs(days=30):
+def prune_old_notification_logs(days=3):
     """
-    Deletes NotificationLog records older than `days` to maintain database speed.
+    Deletes NotificationLog records older than `days`, along with APILog, ServerMetric,
+    and resolved ErrorLog entries to maintain database speed and prevent disk bloat.
     """
     from datetime import timedelta
     from django.utils import timezone
-    from .models import NotificationLog
+    from .models import NotificationLog, UserHiddenNotification
 
     cutoff = timezone.now() - timedelta(days=days)
+
+    # 1. Cascade cleanup on UserHiddenNotification first to satisfy foreign key
+    try:
+        stale_notif_ids = NotificationLog.objects.filter(created_at__lt=cutoff).values_list('id', flat=True)
+        deleted_hidden, _ = UserHiddenNotification.objects.filter(notification_id__in=stale_notif_ids).delete()
+    except Exception as e:
+        print(f"⚠️ UserHiddenNotification prune warning: {e}")
+
     deleted_count, _ = NotificationLog.objects.filter(created_at__lt=cutoff).delete()
     print(f"🧹 [PRUNING] Deleted {deleted_count} stale notification logs older than {days} days.")
+
+    # 2. Cleanup APILog and ServerMetric
+    try:
+        from monitoring.models import APILog, ServerMetric, ErrorLog
+        api_cutoff = timezone.now() - timedelta(hours=24)
+        deleted_api, _ = APILog.objects.filter(created_at__lt=api_cutoff).delete()
+        deleted_metric, _ = ServerMetric.objects.filter(timestamp__lt=api_cutoff).delete()
+        deleted_err, _ = ErrorLog.objects.filter(is_resolved=True, updated_at__lt=cutoff).delete()
+        print(f"🧹 [PRUNING] Cleaned {deleted_api} APILogs, {deleted_metric} ServerMetrics, {deleted_err} resolved ErrorLogs.")
+    except Exception as e:
+        print(f"⚠️ Monitoring prune warning: {e}")
+
     return deleted_count

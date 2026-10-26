@@ -186,6 +186,19 @@ def save_fixture_from_api(item):
         if 'test' in sys.argv:
             transaction.on_commit(lambda: func(*args, **kwargs))
         else:
+            try:
+                from notifications.tasks import dispatch_service_method_async
+                func_name = getattr(func, '__name__', None)
+                if func_name and hasattr(NotificationService, func_name):
+                    transaction.on_commit(lambda: dispatch_service_method_async.apply_async(
+                        args=[func_name, *args],
+                        kwargs=kwargs,
+                        queue='high_priority'
+                    ))
+                    return
+            except Exception:
+                pass
+
             import threading
             from django.db import connection
             def _runner():
@@ -304,29 +317,43 @@ def save_fixture_from_api(item):
                 g = existing_fixture.goals or g
                 s = existing_fixture.score or s
 
-        fixture, created = Fixture.objects.update_or_create(
-            id=f['id'],
-            defaults={
-                'date': f.get('date'),
-                'timestamp': f.get('timestamp', 0),
-                'timezone': f.get('timezone', 'UTC'),
-                'referee': f.get('referee'),
-                'round': l.get('round'),
-                'status_long': status_data.get('long'),
-                'status_short': new_status,
-                'elapsed': status_data.get('elapsed'),
-                'extra': status_data.get('extra'),
-                'league': league_obj,
-                'season': season_obj,
-                'home_team': home_team,
-                'away_team': away_team,
-                'venue': venue_obj,
-                'periods': f.get('periods', {}),
-                'goals': g,
-                'score': s,
-                'events': e
-            }
-        )
+        # --- OPTIMIZATION: Check if fixture data actually changed before executing heavy DB update ---
+        has_changed = True
+        if fixture_exists:
+            status_match = (new_status == old_status and status_data.get('long') == existing_fixture.status_long)
+            goals_match = (new_goals_home == old_goals_home and new_goals_away == old_goals_away)
+            elapsed_match = (status_data.get('elapsed') == existing_fixture.elapsed and status_data.get('extra') == existing_fixture.extra)
+            events_match = (len(e) == len(old_events))
+            if status_match and goals_match and elapsed_match and events_match:
+                has_changed = False
+
+        if fixture_exists and not has_changed:
+            fixture = existing_fixture
+            created = False
+        else:
+            fixture, created = Fixture.objects.update_or_create(
+                id=f['id'],
+                defaults={
+                    'date': f.get('date'),
+                    'timestamp': f.get('timestamp', 0),
+                    'timezone': f.get('timezone', 'UTC'),
+                    'referee': f.get('referee'),
+                    'round': l.get('round'),
+                    'status_long': status_data.get('long'),
+                    'status_short': new_status,
+                    'elapsed': status_data.get('elapsed'),
+                    'extra': status_data.get('extra'),
+                    'league': league_obj,
+                    'season': season_obj,
+                    'home_team': home_team,
+                    'away_team': away_team,
+                    'venue': venue_obj,
+                    'periods': f.get('periods', {}),
+                    'goals': g,
+                    'score': s,
+                    'events': e
+                }
+            )
 
         # =========================================================
         #  NOTIFICATIONS & TRIGGERS (UPDATED)
@@ -718,7 +745,7 @@ def update_live_fixtures():
     print("🔄 TASK START: update_live_fixtures")
     lock_id = "task-lock-live-updates"
     
-    if not acquire_lock(lock_id, expire=15):
+    if not acquire_lock(lock_id, expire=55):
         print("⏭️ SKIPPED: Previous live task still running.")
         return "Skipped: Locked"
 

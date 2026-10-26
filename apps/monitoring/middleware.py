@@ -82,19 +82,18 @@ class MonitoringMiddleware:
             clean_path = self.id_pattern.sub('/{id}', request.path)
             ip = self.get_client_ip(request)
 
-            # 1. Save Access Log
-            APILog.objects.create(
-                endpoint=clean_path,
-                method=request.method,
-                response_time_ms=duration,
-                status_code=response.status_code,
-                ip_address=ip,
-                device_id=device_id,
-                user=user
-            )
-
-            # 2. Error Aggregation logic
+            # 1. Save Access Log (Only log failed requests / errors to prevent DB bloat)
             if response.status_code >= 400:
+                APILog.objects.create(
+                    endpoint=clean_path,
+                    method=request.method,
+                    response_time_ms=duration,
+                    status_code=response.status_code,
+                    ip_address=ip,
+                    device_id=device_id,
+                    user=user
+                )
+                # 2. Error Aggregation logic
                 self.handle_error_log(request, response, clean_path)
 
         except Exception as e:

@@ -74,7 +74,7 @@ app.conf.beat_schedule = {
     'prune-old-notification-logs': {
         'task': 'notifications.tasks.prune_old_notification_logs',
         'schedule': crontab(hour=3, minute=30),
-        'kwargs': {'days': 30},
+        'kwargs': {'days': 3},
     },
 
     # 5. H2H WARMUP - 04:30 AM
