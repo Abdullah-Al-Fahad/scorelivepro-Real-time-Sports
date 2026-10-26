@@ -23,6 +23,7 @@ CSRF_COOKIE_SECURE = True
 if 'default' in DATABASES:
     DATABASES['default'].setdefault('OPTIONS', {})
     DATABASES['default']['OPTIONS']['options'] = '-c lock_timeout=10000 -c statement_timeout=30000'
+    DATABASES['default']['CONN_MAX_AGE'] = 60
 
 # Explicitly use the Redis broker for Channels
 CELERY_BROKER_URL = env('CELERY_BROKER_URL')

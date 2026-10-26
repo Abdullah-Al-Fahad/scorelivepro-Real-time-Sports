@@ -722,6 +722,27 @@ class FixtureListView(generics.ListAPIView):
         return queryset
 
     def list(self, request, *args, **kwargs):
+        status_param = request.query_params.get('status')
+        live_param   = request.query_params.get('live')
+        is_live = (status_param == 'live' or live_param in ('true', 'all') or request.query_params.get('all') == 'true')
+
+        if is_live:
+            from django.core.cache import cache
+            query_string = request.META.get('QUERY_STRING', '')
+            cache_key = f"cache:live_fixtures:{query_string}"
+            cached_data = cache.get(cache_key)
+            if cached_data is not None:
+                return Response(cached_data)
+
+            if request.query_params.get('grouped') == 'true':
+                response = FixtureGroupedListView().get_grouped_response(request, queryset=self.get_queryset())
+            else:
+                response = super().list(request, *args, **kwargs)
+
+            if response.status_code == 200:
+                cache.set(cache_key, response.data, timeout=10)
+            return response
+
         if request.query_params.get('grouped') == 'true':
             return FixtureGroupedListView().get_grouped_response(request, queryset=self.get_queryset())
         return super().list(request, *args, **kwargs)

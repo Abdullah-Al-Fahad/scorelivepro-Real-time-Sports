@@ -87,7 +87,27 @@ services:
     build: .
     image: itzwasik/scorelivepro-web:latest
     restart: unless-stopped
-    command: celery -A config worker -l info -Q high_priority,celery -c 4 --max-tasks-per-child=1000
+    command: celery -A config worker -l info -Q celery -c 2 --max-tasks-per-child=1000
+    env_file:
+      - .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.prod
+      - DATABASE=postgres
+      - SQL_HOST=db
+      - SQL_PORT=5432
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    logging: *default-logging
+
+  celery-notifications:
+    build: .
+    image: itzwasik/scorelivepro-web:latest
+    restart: unless-stopped
+    command: celery -A config worker -l info -Q high_priority -c 4 --max-tasks-per-child=1000
     env_file:
       - .env
     environment:
