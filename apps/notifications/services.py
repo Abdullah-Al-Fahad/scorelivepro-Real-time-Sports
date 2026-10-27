@@ -857,7 +857,8 @@ class NotificationService:
                 )
 
             langs = ['en', 'es', 'fr', 'de', 'it', 'pt', 'tr']
-            with ThreadPoolExecutor(max_workers=len(langs)) as executor:
+            # Cap at 3 workers to prevent DB connection exhaustion during concurrent fan-outs
+            with ThreadPoolExecutor(max_workers=3) as executor:
                 list(executor.map(_send_lang, langs))
             return True
 

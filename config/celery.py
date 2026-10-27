@@ -8,6 +8,12 @@ app = Celery('scorelivepro')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
+# --- WORKER RELIABILITY ---
+# acks_late: Re-deliver tasks if a worker crashes mid-execution (prevents silent notification loss)
+# prefetch_multiplier=1: Ensures even task distribution across notification workers (no hoarding)
+app.conf.task_acks_late = True
+app.conf.worker_prefetch_multiplier = 1
+
 # --- TASK ROUTING (High Priority vs Maintenance Queues) ---
 app.conf.task_default_queue = 'celery'
 app.conf.task_routes = {

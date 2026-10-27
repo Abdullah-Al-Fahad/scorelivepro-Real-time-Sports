@@ -1,4 +1,6 @@
 from django.db import models
+from django.db.models import F
+from django.db.models.fields.json import KeyTransform
 from django.conf import settings
 
 class NotificationLog(models.Model):
@@ -23,6 +25,12 @@ class NotificationLog(models.Model):
             models.Index(fields=['topic', 'created_at']),
             models.Index(fields=['status', 'topic', 'created_at'], name='notif_stat_topic_created_idx'),
             models.Index(fields=['event_type', 'created_at'], name='notif_event_created_idx'),
+            # Expression index matching `data__match_id=...` idempotency lookups,
+            # which compile to (data -> 'match_id') = '...'.
+            models.Index(
+                KeyTransform('match_id', 'data'), F('event_type'), F('created_at'),
+                name='notif_match_event_idx',
+            ),
         ]
 
     def __str__(self):

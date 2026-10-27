@@ -167,6 +167,33 @@ def check_match_has_followers(home_team, away_team, league_obj, fixture):
         return True
     return False
 
+def _dispatch_notification(func, *args, **kwargs):
+    """
+    Queues a NotificationService alert onto the Celery high_priority queue after the
+    current transaction commits (dispatch_service_method_async retries on failure).
+    If the broker is unreachable, sends inline so the alert is not lost.
+    """
+    func_name = getattr(func, '__name__', None)
+
+    def _enqueue():
+        if func_name and hasattr(NotificationService, func_name):
+            try:
+                from notifications.tasks import dispatch_service_method_async
+                dispatch_service_method_async.apply_async(
+                    args=[func_name, *args],
+                    kwargs=kwargs,
+                    queue='high_priority'
+                )
+                return
+            except Exception as err:
+                print(f"⚠️ [Alert Dispatch] Broker enqueue failed for {func_name}, sending inline: {err}")
+        try:
+            func(*args, **kwargs)
+        except Exception as err:
+            print(f"⚠️ [Alert Dispatch Error] {func_name}: {err}")
+
+    transaction.on_commit(_enqueue)
+
 def save_fixture_from_api(item):
     """
     Parses a single fixture object from the API response.
@@ -186,29 +213,7 @@ def save_fixture_from_api(item):
         if 'test' in sys.argv:
             transaction.on_commit(lambda: func(*args, **kwargs))
         else:
-            try:
-                from notifications.tasks import dispatch_service_method_async
-                func_name = getattr(func, '__name__', None)
-                if func_name and hasattr(NotificationService, func_name):
-                    transaction.on_commit(lambda: dispatch_service_method_async.apply_async(
-                        args=[func_name, *args],
-                        kwargs=kwargs,
-                        queue='high_priority'
-                    ))
-                    return
-            except Exception:
-                pass
-
-            import threading
-            from django.db import connection
-            def _runner():
-                try:
-                    func(*args, **kwargs)
-                except Exception as err:
-                    print(f"⚠️ [Alert Dispatch Error]: {err}")
-                finally:
-                    connection.close()
-            transaction.on_commit(lambda: threading.Thread(target=_runner, daemon=True).start())
+            _dispatch_notification(func, *args, **kwargs)
     
     try:
         f = item.get('fixture', {})
@@ -745,7 +750,7 @@ def update_live_fixtures():
     print("🔄 TASK START: update_live_fixtures")
     lock_id = "task-lock-live-updates"
     
-    if not acquire_lock(lock_id, expire=55):
+    if not acquire_lock(lock_id, expire=90):
         print("⏭️ SKIPPED: Previous live task still running.")
         return "Skipped: Locked"
 
@@ -775,13 +780,23 @@ def update_live_fixtures():
 
         if api_data:
             print("💾 Saving Live Matches...")
+            consecutive_errors = 0
             for item in api_data:
                 try:
+                    if consecutive_errors >= 3:
+                        # A broken DB connection makes every later save fail; reset it.
+                        from django.db import connection
+                        connection.close()
+                        consecutive_errors = 0
                     fixture, alerts = save_fixture_from_api(item)
                     if fixture:
                         api_live_ids.add(fixture.id)
                         all_pending_alerts.extend(alerts)
+                        consecutive_errors = 0
+                    else:
+                        consecutive_errors += 1
                 except Exception as e:
+                    consecutive_errors += 1
                     print(f"Error saving live match {item.get('fixture', {}).get('id')}: {e}")
         
         # ZOMBIE CLEANUP: matches stuck as LIVE in DB but not in API response
@@ -1064,16 +1079,7 @@ def update_fixture_details(fixture_id, type='lineups'):
                 if 'test' in sys.argv:
                     func(*args, **kwargs)
                 else:
-                    import threading
-                    from django.db import connection
-                    def _runner():
-                        try:
-                            func(*args, **kwargs)
-                        except Exception as err:
-                            print(f"⚠️ [Event Alert Error]: {err}")
-                        finally:
-                            connection.close()
-                    threading.Thread(target=_runner, daemon=True).start()
+                    _dispatch_notification(func, *args, **kwargs)
             
             if has_followers and new_events:
                 # Build keys for old events to detect genuinely new ones
@@ -1627,10 +1633,31 @@ def check_upcoming_matches_and_notify():
     start_range = now - timedelta(minutes=5)
     end_range = now + timedelta(minutes=30)
     
-    upcoming = Fixture.objects.filter(date__range=(start_range, end_range), status_short='NS').select_related('home_team', 'away_team', 'league')
+    upcoming = list(Fixture.objects.filter(date__range=(start_range, end_range), status_short='NS').select_related('home_team', 'away_team', 'league'))
     count = 0
+    if not upcoming:
+        return "Sent pre-match alerts for 0 fixtures."
     
     from users.models import FanProfile, GuestFavorite
+
+    # Batch follower lookup: 6 queries total instead of up to 8 per match
+    team_ids = {m.home_team_id for m in upcoming} | {m.away_team_id for m in upcoming}
+    league_ids = {m.league_id for m in upcoming}
+    fixture_ids = {m.id for m in upcoming}
+
+    def _followed(field, ids):
+        fan_through = getattr(FanProfile, field).through
+        guest_through = getattr(GuestFavorite, field).through
+        col = {'favorite_teams': 'team_id', 'favorite_leagues': 'league_id', 'favorite_fixtures': 'fixture_id'}[field]
+        lookup = {f"{col}__in": ids}
+        return (
+            set(fan_through.objects.filter(**lookup).values_list(col, flat=True).distinct()) |
+            set(guest_through.objects.filter(**lookup).values_list(col, flat=True).distinct())
+        )
+
+    followed_teams = _followed('favorite_teams', team_ids)
+    followed_leagues = _followed('favorite_leagues', league_ids)
+    followed_fixtures = _followed('favorite_fixtures', fixture_ids)
 
     for match in upcoming:
         # DUPLICATE CHECK: Use match_id in JSON data to ensure we don't spam
@@ -1643,22 +1670,10 @@ def check_upcoming_matches_and_notify():
         if already_notified:
             continue
 
-        home_has_fans = (
-            FanProfile.objects.filter(favorite_teams__id=match.home_team.id).exists() or
-            GuestFavorite.objects.filter(favorite_teams__id=match.home_team.id).exists()
-        )
-        away_has_fans = (
-            FanProfile.objects.filter(favorite_teams__id=match.away_team.id).exists() or
-            GuestFavorite.objects.filter(favorite_teams__id=match.away_team.id).exists()
-        )
-        league_has_fans = (
-            FanProfile.objects.filter(favorite_leagues__id=match.league_id).exists() or
-            GuestFavorite.objects.filter(favorite_leagues__id=match.league_id).exists()
-        )
-        match_has_fans = (
-            FanProfile.objects.filter(favorite_fixtures__id=match.id).exists() or
-            GuestFavorite.objects.filter(favorite_fixtures__id=match.id).exists()
-        )
+        home_has_fans = match.home_team_id in followed_teams
+        away_has_fans = match.away_team_id in followed_teams
+        league_has_fans = match.league_id in followed_leagues
+        match_has_fans = match.id in followed_fixtures
 
         if not home_has_fans and not away_has_fans and not league_has_fans and not match_has_fans:
             continue

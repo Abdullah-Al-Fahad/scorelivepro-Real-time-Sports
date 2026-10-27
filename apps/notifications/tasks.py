@@ -56,19 +56,29 @@ def sync_device_topic_async_task(device_ids, prefix, item_id, is_subscribe=True)
             except Exception as e:
                 print(f"Failed to {'subscribe' if is_subscribe else 'unsubscribe'} device {dev.id} to {topic_lang}: {e}")
 
-@shared_task(name='notifications.tasks.dispatch_service_method_async', ignore_result=True)
-def dispatch_service_method_async(method_name, *args, **kwargs):
+@shared_task(
+    name='notifications.tasks.dispatch_service_method_async',
+    ignore_result=True,
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=30,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def dispatch_service_method_async(self, method_name, *args, **kwargs):
     """
     Asynchronously executes a NotificationService alert method on a Celery worker,
     keeping real-time match processing loops unblocked.
+    Retries up to 3 times with exponential backoff on transient errors.
     """
     from notifications.services import NotificationService
     func = getattr(NotificationService, method_name, None)
     if func and callable(func):
-        try:
-            func(*args, **kwargs)
-        except Exception as e:
-            print(f"Error in dispatch_service_method_async for {method_name}: {e}")
+        func(*args, **kwargs)
+    else:
+        print(f"⚠️ [dispatch_service_method_async] Unknown method: {method_name}")
 
 
 @shared_task
@@ -142,17 +152,37 @@ def prune_old_notification_logs(days=3):
 
     cutoff = timezone.now() - timedelta(days=days)
 
-    # 1. Cascade cleanup on UserHiddenNotification first to satisfy foreign key
+    # 1. Cascade cleanup on UserHiddenNotification first (batched to prevent locks)
+    total_hidden_deleted = 0
     try:
-        stale_notif_ids = NotificationLog.objects.filter(created_at__lt=cutoff).values_list('id', flat=True)
-        deleted_hidden, _ = UserHiddenNotification.objects.filter(notification_id__in=stale_notif_ids).delete()
+        batch_size = 5000
+        while True:
+            stale_ids = list(
+                NotificationLog.objects.filter(created_at__lt=cutoff)
+                .values_list('id', flat=True)[:batch_size]
+            )
+            if not stale_ids:
+                break
+            deleted_h, _ = UserHiddenNotification.objects.filter(notification_id__in=stale_ids).delete()
+            total_hidden_deleted += deleted_h
     except Exception as e:
         print(f"⚠️ UserHiddenNotification prune warning: {e}")
 
-    deleted_count, _ = NotificationLog.objects.filter(created_at__lt=cutoff).delete()
+    # 2. Batch-delete NotificationLog to prevent long-held table locks
+    deleted_count = 0
+    batch_size = 5000
+    while True:
+        ids_to_delete = list(
+            NotificationLog.objects.filter(created_at__lt=cutoff)
+            .values_list('id', flat=True)[:batch_size]
+        )
+        if not ids_to_delete:
+            break
+        batch_deleted, _ = NotificationLog.objects.filter(id__in=ids_to_delete).delete()
+        deleted_count += batch_deleted
     print(f"🧹 [PRUNING] Deleted {deleted_count} stale notification logs older than {days} days.")
 
-    # 2. Cleanup APILog and ServerMetric
+    # 3. Cleanup APILog and ServerMetric
     try:
         from monitoring.models import APILog, ServerMetric, ErrorLog
         api_cutoff = timezone.now() - timedelta(hours=24)
