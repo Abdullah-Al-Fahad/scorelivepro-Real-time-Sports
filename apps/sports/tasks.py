@@ -172,6 +172,7 @@ def _dispatch_notification(func, *args, **kwargs):
     Queues a NotificationService alert onto the Celery high_priority queue after the
     current transaction commits (dispatch_service_method_async retries on failure).
     If the broker is unreachable, sends inline so the alert is not lost.
+    Tasks expire after 600s so stale queued alerts can never fire hours after a match.
     """
     func_name = getattr(func, '__name__', None)
 
@@ -182,7 +183,8 @@ def _dispatch_notification(func, *args, **kwargs):
                 dispatch_service_method_async.apply_async(
                     args=[func_name, *args],
                     kwargs=kwargs,
-                    queue='high_priority'
+                    queue='high_priority',
+                    expires=600
                 )
                 return
             except Exception as err:
@@ -194,14 +196,14 @@ def _dispatch_notification(func, *args, **kwargs):
 
     transaction.on_commit(_enqueue)
 
-def save_fixture_from_api(item):
+def save_fixture_from_api(item, allow_alerts=True):
     """
     Parses a single fixture object from the API response.
     Saves to the central Fixture table.
     
     UPDATES:
     - Implements 'Idempotency Checks' to prevent duplicate alerts.
-    - triggers NotificationService immediately instead of returning a list.
+    - Enforces match-age and post-FT guards so finished/old matches never emit notifications.
     """
     # Local imports to prevent circular dependency issues
     from notifications.models import NotificationLog
@@ -363,15 +365,34 @@ def save_fixture_from_api(item):
         # =========================================================
         #  NOTIFICATIONS & TRIGGERS (UPDATED)
         # =========================================================
-        
-        has_followers = check_match_has_followers(home_team, away_team, league_obj, fixture)
+        from django.utils.dateparse import parse_datetime
+        fixture_dt = fixture.date
+        if isinstance(fixture_dt, str):
+            fixture_dt = parse_datetime(fixture_dt)
+        match_age = (timezone.now() - fixture_dt) if fixture_dt else timedelta(0)
 
         alert_eligible_statuses = ['1H', 'HT', '2H', 'ET', 'BT', 'P', 'INT', 'LIVE']
         finished_statuses = ['FT', 'AET', 'PEN']
-        event_lookback = timezone.now() - timedelta(hours=4)
+        # Use 3-day lookback (matching NotificationLog retention) so idempotency never expires after 4 hours
+        event_lookback = timezone.now() - timedelta(days=3)
+
+        was_already_finished = bool(fixture_exists and old_status in Fixture.FINISHED_STATUSES)
+        is_stale_match = (match_age > timedelta(hours=3, minutes=30))
+
+        has_followers = False
+        if allow_alerts and fixture_exists and not was_already_finished and not is_stale_match:
+            has_followers = check_match_has_followers(home_team, away_team, league_obj, fixture)
+            if has_followers:
+                # If FULL_TIME was already sent for this match, suppress all further match notifications
+                if NotificationLog.objects.filter(
+                    data__match_id=str(fixture.id),
+                    event_type='FULL_TIME',
+                    created_at__gte=event_lookback
+                ).exists():
+                    has_followers = False
 
         # 1. Goal Alerts
-        if has_followers and fixture_exists and (new_status in alert_eligible_statuses or new_status in finished_statuses):
+        if has_followers and fixture_exists and (new_status in alert_eligible_statuses or new_status in finished_statuses) and match_age <= timedelta(hours=3, minutes=15):
             # Normalize None to 0 for initial match state
             old_h = 0 if old_goals_home is None else old_goals_home
             old_a = 0 if old_goals_away is None else old_goals_away
@@ -448,8 +469,8 @@ def save_fixture_from_api(item):
                         league_id=fixture.league_id
                     )
 
-        # 1.5. Card, Substitution, and VAR Alerts
-        if has_followers and fixture_exists:
+        # 1.5. Card, Substitution, and VAR Alerts (ONLY while match is actively live and <= 3h old)
+        if has_followers and fixture_exists and new_status in alert_eligible_statuses and match_age <= timedelta(hours=3):
             def make_event_key(ev):
                 time_elapsed = ev.get('time', {}).get('elapsed') or 0
                 time_extra = ev.get('time', {}).get('extra') or ''
@@ -465,9 +486,10 @@ def save_fixture_from_api(item):
                 ev_key = make_event_key(ev)
                 if ev_key not in old_event_keys:
                     elapsed = ev.get('time', {}).get('elapsed') or 0
-                    current_fixture_elapsed = fixture.elapsed or 0
+                    current_fixture_elapsed = fixture.elapsed or status_data.get('elapsed') or 0
                     
-                    if not old_events and elapsed < (current_fixture_elapsed - 3):
+                    # Never fire push alerts for historical events >8 mins behind the current match clock
+                    if current_fixture_elapsed and elapsed and elapsed < (current_fixture_elapsed - 8):
                         continue
                         
                     ev_type = ev.get('type')
@@ -757,8 +779,8 @@ def update_live_fixtures():
     try:
         url = f"{BASE_URL}/fixtures"
         live_statuses = Fixture.LIVE_STATUSES
-        # Optimize API usage: Only monitor matches started within the last 4 hours for zombie cleanup.
-        cutoff_time = timezone.now() - timedelta(hours=4)
+        # Monitor matches started within the last 12 hours for zombie cleanup so delayed matches never get orphaned.
+        cutoff_time = timezone.now() - timedelta(hours=12)
         db_live_ids = set(Fixture.objects.filter(
             status_short__in=live_statuses,
             date__gte=cutoff_time
@@ -806,19 +828,28 @@ def update_live_fixtures():
             chunk_size = 20
             for i in range(0, len(zombie_ids), chunk_size):
                 if i > 0:
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                 chunk = zombie_ids[i:i + chunk_size]
                 ids_str = '-'.join(map(str, chunk))
                 try:
                     z_response = requests.get(url, headers=get_headers(), params={'ids': ids_str}, timeout=10)
                     z_data = z_response.json().get('response', [])
+                    returned_zombie_ids = set()
                     for item in z_data:
                         try:
                             fixture, alerts = save_fixture_from_api(item)
                             if fixture:
+                                returned_zombie_ids.add(fixture.id)
                                 all_pending_alerts.extend(alerts)
                         except Exception as e:
                             print(f"Error saving finished match: {e}")
+                    # If API still reports a zombie match >3.5h past kickoff as live or omits it, force mark FT
+                    three_half_hours_ago = timezone.now() - timedelta(hours=3, minutes=30)
+                    Fixture.objects.filter(
+                        id__in=chunk,
+                        status_short__in=live_statuses,
+                        date__lte=three_half_hours_ago
+                    ).update(status_short='FT', status_long='Match Finished', elapsed=90)
                 except Exception as e:
                     print(f"❌ Error updating finished matches {chunk}: {e}")
 
@@ -1054,10 +1085,28 @@ def update_fixture_details(fixture_id, type='lineups'):
             FixtureLineup.objects.update_or_create(
                 fixture=fixture, defaults={'home': data[0] if len(data) > 0 else {}, 'away': data[1] if len(data) > 1 else {}}
             )
-            if not already_had_lineups:
-                has_followers = check_match_has_followers(fixture.home_team, fixture.away_team, fixture.league, fixture)
-                if has_followers:
-                    NotificationService.send_lineup_alert(fixture.home_team, fixture.away_team, fixture.id, fixture.league_id)
+            # Only send lineup push notifications for pre-match (NS) fixtures near kickoff (never after match started or finished)
+            now = timezone.now()
+            is_pre_match_window = (
+                fixture.status_short == 'NS' and
+                fixture.date is not None and
+                (now - timedelta(minutes=10)) <= fixture.date <= (now + timedelta(hours=2))
+            )
+            if not already_had_lineups and is_pre_match_window:
+                from notifications.models import NotificationLog
+                already_sent_lineup = NotificationLog.objects.filter(
+                    data__match_id=str(fixture.id),
+                    event_type='LINEUPS',
+                    created_at__gte=now - timedelta(days=3)
+                ).exists()
+                if not already_sent_lineup:
+                    has_followers = check_match_has_followers(fixture.home_team, fixture.away_team, fixture.league, fixture)
+                    if has_followers:
+                        import sys
+                        if 'test' in sys.argv:
+                            NotificationService.send_lineup_alert(fixture.home_team, fixture.away_team, fixture.id, fixture.league_id)
+                        else:
+                            _dispatch_notification(NotificationService.send_lineup_alert, fixture.home_team, fixture.away_team, fixture.id, fixture.league_id)
         elif type == 'statistics':
              FixtureStatistic.objects.update_or_create(fixture=fixture, defaults={'data': data})
         elif type == 'events':
@@ -1071,8 +1120,25 @@ def update_fixture_details(fixture_id, type='lineups'):
             fixture.events = new_events
             fixture.save(update_fields=['events'])
             
-            # Check if this match has followers before doing expensive notification work
+            # Only evaluate push alerts if the match is actively live and kicked off <= 3 hours ago
+            now = timezone.now()
+            is_live_and_fresh = (
+                fixture.status_short in Fixture.LIVE_STATUSES and
+                fixture.date is not None and
+                (now - fixture.date) <= timedelta(hours=3)
+            )
+            if not is_live_and_fresh:
+                return True
+
+            evt_lookback = now - timedelta(days=3)
             has_followers = check_match_has_followers(fixture.home_team, fixture.away_team, fixture.league, fixture)
+            if has_followers:
+                if NotificationLog.objects.filter(
+                    data__match_id=str(fixture.id),
+                    event_type='FULL_TIME',
+                    created_at__gte=evt_lookback
+                ).exists():
+                    has_followers = False
 
             def _dispatch_evt(func, *args, **kwargs):
                 import sys
@@ -1093,12 +1159,15 @@ def update_fixture_details(fixture_id, type='lineups'):
                     return f"{time_elapsed}_{time_extra}_{team_id}_{ev_type}_{player_id}_{detail}"
                 
                 old_event_keys = {_make_event_key(ev) for ev in (old_events or [])}
-                evt_lookback = timezone.now() - timedelta(hours=4)
+                current_fixture_elapsed = fixture.elapsed or 0
                 
                 for ev in new_events:
                     ev_key = _make_event_key(ev)
                     if ev_key not in old_event_keys:
                         elapsed = ev.get('time', {}).get('elapsed') or 0
+                        # Never fire push alerts for historical events >8 mins behind current match clock
+                        if current_fixture_elapsed and elapsed and elapsed < (current_fixture_elapsed - 8):
+                            continue
                         ev_type = ev.get('type')
                         team_name = ev.get('team', {}).get('name') or ''
                         team_id = ev.get('team', {}).get('id') or ''
@@ -1269,7 +1338,8 @@ def fetch_fixtures_for_date(date_str):
         data = response.json().get('response', [])
         with transaction.atomic():
             for item in data:
-                save_fixture_from_api(item)
+                # Schedule sync should never trigger live match push alerts
+                save_fixture_from_api(item, allow_alerts=False)
 
         # --- RESCHEDULED & DISPLACED FIXTURES RECONCILIATION ---
         # When tournaments/leagues publish preliminary draw dates (e.g. preliminary UCL draw fixtures),
@@ -1294,7 +1364,7 @@ def fetch_fixtures_for_date(date_str):
                     returned_ids = set()
                     with transaction.atomic():
                         for item in c_data:
-                            save_fixture_from_api(item)
+                            save_fixture_from_api(item, allow_alerts=False)
                             returned_ids.add(item['fixture']['id'])
                     # Delete any fixtures that the provider completely removed
                     missing_in_api = set(chunk) - returned_ids
@@ -1381,31 +1451,44 @@ def fetch_upcoming_fixtures(days=7, include_yesterday=False):
 @shared_task
 def fetch_live_statistics():
     lock_id = "task-lock-live-stats"
-    if not acquire_lock(lock_id, expire=60):
+    if not acquire_lock(lock_id, expire=120):
         print("⏭️ SKIPPED: Previous stats update still running.")
         return "Skipped: Locked"
 
     try:
         live_statuses = Fixture.LIVE_STATUSES
         finished_statuses = Fixture.FINISHED_STATUSES
-        cutoff_time = timezone.now() - timedelta(hours=4)
+        cutoff_time = timezone.now() - timedelta(hours=3)
         
         # Exclude finished fixtures that already have statistics populated
-        candidates = Fixture.objects.filter(
-            Q(status_short__in=live_statuses) | 
+        candidates = list(Fixture.objects.filter(
+            Q(status_short__in=live_statuses, date__gte=cutoff_time) | 
             Q(status_short__in=finished_statuses, date__gte=cutoff_time, statistic__isnull=True)
-        ).values_list('id', flat=True)
+        ).values_list('id', 'status_short')[:60])
         
         if not candidates: 
             return "No live/recent fixtures for stats."
             
+        r = get_redis_client()
         count = 0
-        for fid in candidates:
+        for fid, st in candidates:
+            poll_key = f"stats_last_poll:{fid}"
+            try:
+                if r and r.get(poll_key):
+                    continue
+            except Exception:
+                pass
             try:
                 if update_fixture_details(fid, type='statistics'): 
                     count += 1
-                # Throttle requests to respect the rate limit per minute
-                time.sleep(1.0)
+                try:
+                    if r:
+                        # Finished matches without stats in API-Football shouldn't be re-queried every 60s for 4 hours
+                        ttl = 14400 if st in finished_statuses else 120
+                        r.set(poll_key, "1", ex=ttl)
+                except Exception:
+                    pass
+                time.sleep(0.25)
             except Exception as e: 
                 print(f"Error in statistic loop for {fid}: {e}")
                 continue
@@ -1423,27 +1506,37 @@ def fetch_lineups_near_kickoff():
     try:
         now = timezone.now()
         cutoff_future = now + timedelta(minutes=45)
-        cutoff_past = now - timedelta(hours=4) 
+        cutoff_past_ns = now - timedelta(minutes=15)
+        cutoff_past_live = now - timedelta(hours=2)
         live_statuses = Fixture.LIVE_STATUSES
-        finished_statuses = Fixture.FINISHED_STATUSES
         
-        # Only select fixtures that do NOT have a lineup record saved yet (lineup__isnull=True)
-        candidates = Fixture.objects.filter(
-            Q(status_short='NS', date__lte=cutoff_future, date__gte=now) | 
-            Q(status_short__in=live_statuses) | 
-            Q(status_short__in=finished_statuses, date__gte=cutoff_past)
-        ).filter(lineup__isnull=True).values_list('id', flat=True)
+        # Only select pre-match or currently live fixtures that do NOT have a lineup record saved yet
+        candidates = list(Fixture.objects.filter(
+            Q(status_short='NS', date__lte=cutoff_future, date__gte=cutoff_past_ns) | 
+            Q(status_short__in=live_statuses, date__gte=cutoff_past_live)
+        ).filter(lineup__isnull=True).values_list('id', flat=True)[:40])
         
         if not candidates: 
             return "No lineups to fetch."
             
+        r = get_redis_client()
         count = 0
         for fid in candidates:
+            poll_key = f"lineups_last_poll:{fid}"
+            try:
+                if r and r.get(poll_key):
+                    continue
+            except Exception:
+                pass
             try:
                 if update_fixture_details(fid, type='lineups'): 
                     count += 1
-                # Throttle requests to respect the rate limit per minute
-                time.sleep(1.0)
+                try:
+                    if r:
+                        r.set(poll_key, "1", ex=300)
+                except Exception:
+                    pass
+                time.sleep(0.25)
             except Exception as e: 
                 print(f"Error in lineup loop for {fid}: {e}")
                 continue
@@ -1461,12 +1554,13 @@ def fetch_live_events():
     Protected by DIRECT REDIS LOCK to prevent overlapping runs.
     """
     lock_id = "task-lock-live-events"
-    if not acquire_lock(lock_id, expire=40):
+    if not acquire_lock(lock_id, expire=90):
         print("⏭️ SKIPPED: Previous live events update still running.")
         return "Skipped: Locked"
 
     try:
         live_statuses = Fixture.LIVE_STATUSES
+        live_cutoff = timezone.now() - timedelta(hours=3)
         
         # Only fetch events for live matches that have followers
         from users.models import FanProfile, GuestFavorite
@@ -1496,9 +1590,10 @@ def fetch_live_events():
             .values_list('favorite_fixtures__id', flat=True)
         )
         
-        # Find live fixtures that have at least one follower connection
+        # Find live fixtures started within the last 3 hours that have at least one follower connection
         candidates = Fixture.objects.filter(
-            status_short__in=live_statuses
+            status_short__in=live_statuses,
+            date__gte=live_cutoff
         ).filter(
             Q(home_team_id__in=followed_team_ids) |
             Q(away_team_id__in=followed_team_ids) |
@@ -1536,8 +1631,7 @@ def fetch_live_events():
                         r.set(f"events_last_poll:{fid}", "1", ex=45)
                 except Exception:
                     pass
-                # Throttle requests to respect the rate limit per minute
-                time.sleep(1.0)
+                time.sleep(0.25)
             except Exception as e:
                 print(f"Error in live events loop for {fid}: {e}")
                 continue
@@ -1807,7 +1901,8 @@ def cleanup_stale_live_fixtures():
             
             with transaction.atomic():
                 for item in api_data:
-                    fixture, _ = save_fixture_from_api(item)
+                    # Stale cleanup (>4h past kickoff) must never fire live match push notifications
+                    fixture, _ = save_fixture_from_api(item, allow_alerts=False)
                     if fixture:
                         api_returned_ids.add(fixture.id)
                         updated_count += 1

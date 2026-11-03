@@ -87,7 +87,7 @@ services:
     build: .
     image: itzwasik/scorelivepro-web:latest
     restart: unless-stopped
-    command: celery -A config worker -l info -Q celery -c 2 --max-tasks-per-child=1000
+    command: celery -A config worker -l info -Q celery -c 4 --max-tasks-per-child=1000
     env_file:
       - .env
     environment:

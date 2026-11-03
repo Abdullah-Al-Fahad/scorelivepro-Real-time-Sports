@@ -806,7 +806,7 @@ class NotificationService:
         if "body" not in data and body:
             data["body"] = str(body)
 
-        # Redis atomic deduplication guard for live sports events (Prevents worker concurrency races)
+        # Redis atomic deduplication & staleness guard for live sports events
         import sys
         is_testing = 'test' in sys.argv
         dedup_eligible_events = [
@@ -816,13 +816,44 @@ class NotificationService:
             'INTERRUPTED', 'ABANDONED', 'CANCELLED', 'WALKOVER'
         ]
         if not is_internal and not is_testing and event_type in dedup_eligible_events:
+            # 0. Hard match-age & status gatekeeper: never push stale notifications for finished/old matches
+            m_id_raw = data.get("match_id")
+            if m_id_raw and str(m_id_raw).isdigit():
+                try:
+                    from django.utils import timezone
+                    from sports.models import Fixture
+                    fixture_obj = Fixture.objects.filter(id=int(m_id_raw)).only('id', 'date', 'status_short').first()
+                    if fixture_obj and fixture_obj.date:
+                        age_hours = (timezone.now() - fixture_obj.date).total_seconds() / 3600.0
+                        if event_type in ['MATCH_START', 'LINEUPS']:
+                            if fixture_obj.status_short != 'NS' or age_hours > 0.25:
+                                print(f"🛑 [STALE GUARD] Suppressed {event_type} push for non-NS/started match {fixture_obj.id} (status={fixture_obj.status_short}, age={age_hours:.2f}h)")
+                                return False
+                        elif event_type in [
+                            'KICKOFF', 'GOAL', 'DISALLOWED_GOAL', 'CARD', 'SUBSTITUTION', 'VAR',
+                            'HALF_TIME', 'SECOND_HALF', 'EXTRA_TIME', 'PENALTY_SHOOTOUT',
+                            'MISSED_PENALTY', 'OWN_GOAL'
+                        ]:
+                            if age_hours > 3.25:
+                                print(f"🛑 [STALE GUARD] Suppressed stale {event_type} push for match {fixture_obj.id} (age={age_hours:.2f}h > 3.25h)")
+                                return False
+                            if event_type in ['CARD', 'SUBSTITUTION', 'VAR', 'MISSED_PENALTY', 'OWN_GOAL', 'KICKOFF', 'HALF_TIME', 'SECOND_HALF'] and fixture_obj.status_short in Fixture.FINISHED_STATUSES:
+                                print(f"🛑 [STALE GUARD] Suppressed post-finish {event_type} push for match {fixture_obj.id} (status={fixture_obj.status_short})")
+                                return False
+                        elif event_type == 'FULL_TIME':
+                            if age_hours > 3.5:
+                                print(f"🛑 [STALE GUARD] Suppressed late FULL_TIME push for match {fixture_obj.id} (age={age_hours:.2f}h > 3.5h)")
+                                return False
+                except Exception as guard_err:
+                    print(f"⚠️ [STALE GUARD] Check error: {guard_err}")
+
             try:
                 from sports.tasks import get_redis_client
                 r = get_redis_client()
                 m_id = str(data.get("match_id", ""))
                 sub_id = str(data.get("score") or data.get("card_type", "") + data.get("player_name", "") or data.get("player_in", "") or data.get("detail", "") or data.get("elapsed", "") or data.get("status", "") or "")
                 dedup_key = f"notif_dedup:{event_type}:{topic}:{m_id}:{sub_id}"
-                if not r.set(dedup_key, "1", nx=True, ex=7200):
+                if not r.set(dedup_key, "1", nx=True, ex=86400):
                     print(f"🛑 [DEDUPLICATION GUARD] Suppressed duplicate push for {dedup_key}")
                     return False
             except Exception:
